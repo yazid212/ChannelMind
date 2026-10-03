@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChannelMind · Channel export</title>
+  <link rel="stylesheet" href="export.css">
+  <script type="module" src="export.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="export.html"><b>CM</b> ChannelMind</a><span>CHANNEL EXPORTER</span></header>
+  <main>
+    <section class="intro"><p class="eyebrow">Public videos, in words</p><h1>Every accessible transcript.<br><em>One export.</em></h1><p>Enter a public YouTube channel or playlist. ChannelMind checks its videos and packages accessible captions with titles, links and timestamps.</p></section>
+    <div class="layout">
+      <section class="card">
+        <h2>1. Export a public channel</h2>
+        <label for="public-channel">Channel URL or @handle</label><input id="public-channel" type="text" placeholder="https://youtube.com/@creator">
+        <label for="language">Preferred caption language</label>
+        <select id="language"><option value="">Original / best available</option><option value="en">English</option><option value="fr">French</option><option value="ar">Arabic</option><option value="es">Spanish</option><option value="de">German</option></select>
+        <button id="start-public" class="primary">Export public channel →</button>
+        <p class="hint">No channel-owner sign-in is needed. Videos without publicly accessible captions appear as unavailable. Keep the API running during the export.</p>
+        <h2>2. Or export a public playlist</h2>
+        <label for="public-playlist">Playlist URL or ID</label><input id="public-playlist" type="text" placeholder="https://www.youtube.com/playlist?list=PL...">
+        <button id="start-playlist" class="primary">Export public playlist →</button>
+        <p class="hint">Includes accessible videos from every channel in the playlist. Private playlists require access and cannot be exported here.</p>
+        <label for="partial-file">Continue an older partial export</label>
+        <input id="partial-file" type="file" accept=".zip,.json,application/zip,application/json">
+        <button id="resume-upload">Continue from ZIP or JSON</button>
+        <details class="settings"><summary>Export a channel you own with Google</summary>
+        <p id="connection">Connect the account that owns your channel.</p>
+        <button id="connect">Connect YouTube</button>
+        <button id="disconnect" class="quiet" hidden>Disconnect account</button>
+        <label for="channel">Connected channel</label>
+        <select id="channel" disabled><option>Connect YouTube first</option></select>
+        <button id="start" class="primary" disabled>Export owned channel →</button>
+        </details>
+      </section>
+      <section class="card output">
+        <h2>Your export</h2>
+        <div id="empty"><span class="orb">↧</span><h3>A whole channel you can use</h3><p>Download a readable text file, structured JSON, or a ZIP with individual transcripts. Import the ZIP into ChannelMind for questions and cited answers.</p></div>
+        <div id="job" hidden aria-live="polite">
+          <span id="state" class="badge">Queued</span><h3 id="job-title"></h3>
+          <p id="message"></p><progress id="progress" max="100" value="0"></progress>
+          <p id="counts"></p><p id="partial" class="error" hidden></p><p id="expiry" class="hint"></p>
+          <div class="actions"><button id="resume" hidden>Resume export</button><button id="cancel" class="quiet" hidden>Stop export</button></div>
+          <div id="downloads" class="actions" hidden><button data-format="zip">Download ZIP</button><button data-format="txt">Download TXT</button><button data-format="json">Download JSON</button></div>
+          <button id="open-app" class="primary" hidden>Use in ChannelMind →</button>
+          <details id="issues" hidden><summary>Unavailable captions</summary><ul id="issue-list"></ul></details>
+        </div>
+        <p id="error" class="error" role="alert" hidden></p>
+      </section>
+    </div>
+    <details class="settings" id="settings-panel"><summary>Connection settings & setup</summary>
+      <p>Use your ChannelMind API and website addresses. The extension only requests access to the API address you save.</p>
+      <label for="api-origin">API address</label><input id="api-origin" type="url" value="http://127.0.0.1:8000">
+      <label for="app-origin">ChannelMind website</label><input id="app-origin" type="url" value="http://localhost:3000">
+      <button id="save-settings">Save settings</button>
+      <p class="hint">For the developer: register this exact Google OAuth redirect URI and add the extension ID to the API configuration.</p>
+      <code id="redirect"></code><code id="extension-id"></code>
+    </details>
+    <footer>Public exports collect only accessible caption text. The optional owned-channel connection uses Google consent. Exports expire with the workspace. See the included README and privacy notice for setup and retention.</footer>
+  </main>
+</body>
+</html>

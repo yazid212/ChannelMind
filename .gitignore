@@ -1,0 +1,37 @@
+# Environment
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+
+# Data & Vector Store
+data/
+vectorstore/
+
+# Python
+__pycache__/
+.pytest_cache/
+.test-tmp/
+.demo-browser-profile/
+.pytest-tmp-video/
+graphify-out/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+web/node_modules/
+web/.next/
+web/.vercel/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+.codex/
+/_
+
+# Historical local delivery notes and captures of the old Streamlit UI
+/PROJECT_STATUS.md
+/demo/

@@ -1,0 +1,49 @@
+FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-core.txt requirements-api.txt ./
+RUN pip install --upgrade pip && pip install -r requirements-api.txt
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+RUN python -c "from faster_whisper.utils import download_model; download_model('small', output_dir='/opt/whisper-small')"
+
+FROM node:22-bookworm-slim AS node_runtime
+
+FROM python:3.11-slim-bookworm AS runtime
+
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_ENV=production \
+    LOCAL_WHISPER_MODEL=/opt/whisper-small \
+    LOCAL_WHISPER_MODEL_PATH=/app/data/models
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system app && \
+    useradd --system --gid app --create-home app && \
+    mkdir -p /app/data/models /app/vectorstore && \
+    chown -R app:app /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/whisper-small /opt/whisper-small
+COPY --from=builder --chown=app:app /root/.cache/huggingface /home/app/.cache/huggingface
+COPY --from=node_runtime /usr/local/bin/node /usr/local/bin/node
+RUN node --version
+COPY --chown=app:app api/ api/
+COPY --chown=app:app src/ src/
+COPY --chown=app:app config.py .
+
+USER app
+EXPOSE 8000
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

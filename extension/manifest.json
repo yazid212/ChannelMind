@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "ChannelMind — Channel Transcript Exporter",
+  "version": "0.1.0",
+  "description": "Export the available captions of your authorized YouTube channel in one job, then ask questions in ChannelMind.",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "storage", "identity", "downloads", "alarms"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "action": { "default_title": "Export this channel with ChannelMind" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'" }
+}
