@@ -158,6 +158,7 @@ class Embedder:
 
     @staticmethod
     def _document(video: Dict, texts: List[str], start_time: int) -> Document:
+        start_time = int(start_time)
         return Document(
             page_content=" ".join(texts),
             metadata={
@@ -169,6 +170,9 @@ class Embedder:
                     f"&t={start_time}s"
                 ),
                 "document_type": "transcript",
+                "transcript_source": video.get("transcript_source") or (
+                    "youtube_captions" if video.get("caption_kind") else "unknown"
+                ),
             },
         )
 
@@ -402,6 +406,42 @@ class Embedder:
             for metadata in data.get("metadatas", [])
             if metadata and metadata.get("video_id")
         }
+
+    def transcript_chunks(self, video_id: str) -> List[Document]:
+        """Read one indexed video's transcript without semantic-search omissions."""
+        if getattr(self, "backend", "chroma") == "qdrant":
+            documents = []
+            offset = None
+            while True:
+                points, offset = self.vectorstore.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=self._workspace_filter("transcript", video_id),
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    if payload.get("page_content"):
+                        documents.append(Document(
+                            page_content=payload["page_content"],
+                            metadata={key: value for key, value in payload.items()
+                                      if key not in {"page_content", "workspace_id", "expires_at"}},
+                        ))
+                if offset is None:
+                    break
+        else:
+            result = self.vectorstore.get(
+                where={"$and": [{"document_type": "transcript"}, {"video_id": video_id}]},
+                include=["documents", "metadatas"],
+            )
+            documents = [
+                Document(page_content=content, metadata=metadata)
+                for content, metadata in zip(result.get("documents", []), result.get("metadatas", []))
+                if content and metadata
+            ]
+        return sorted(documents, key=lambda doc: float(doc.metadata.get("start_time", 0)))
 
     def clear(self, document_type: str | None = None) -> None:
         if getattr(self, "backend", "chroma") == "qdrant":

@@ -88,9 +88,26 @@ class ChatRequest(BaseModel):
 
 
 class SourceResponse(BaseModel):
+    video_id: str
     title: str
     url: str
+    start_time: float
     timestamp: str
+    quote: str
+
+
+class TranscriptChunkResponse(BaseModel):
+    text: str
+    start_time: float
+    timestamp: str
+    url: str
+
+
+class TranscriptResponse(BaseModel):
+    video_id: str
+    title: str
+    transcript_source: str
+    chunks: list[TranscriptChunkResponse]
 
 
 class UsageResponse(BaseModel):

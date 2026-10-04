@@ -11,7 +11,9 @@ export type ExportImport = {
   metrics: { catalog: number; videos: number; chunks: number };
 };
 
-export type Source = { title: string; url: string; timestamp: string };
+export type Source = { video_id: string; title: string; url: string; start_time: number; timestamp: string; quote: string };
+export type TranscriptChunk = { text: string; start_time: number; timestamp: string; url: string };
+export type Transcript = { video_id: string; title: string; transcript_source: string; chunks: TranscriptChunk[] };
 export type Usage = { input_tokens: number; output_tokens: number; total_tokens: number };
 export type ChatResult = {
   answer: string;
@@ -68,6 +70,12 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 }
 
 export const api = {
+  transcript: (workspace: Workspace, videoId: string) =>
+    request<Transcript>(
+      `/api/v1/workspaces/${workspace.workspace_id}/videos/${encodeURIComponent(videoId)}/transcript`,
+      { method: "GET" },
+      workspace.token,
+    ),
   ingestVideo: (workspace: Workspace, video: string) =>
     request<{ job_id: string; status: string }>(
       `/api/v1/workspaces/${workspace.workspace_id}/videos`,

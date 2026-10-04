@@ -164,9 +164,12 @@ Answer:"""
             if key not in seen:
                 seen.add(key)
                 sources.append({
+                    "video_id": doc.metadata["video_id"],
                     "title": doc.metadata["title"],
                     "url": doc.metadata["url"],
-                    "timestamp": format_timestamp(doc.metadata["start_time"])
+                    "start_time": doc.metadata["start_time"],
+                    "timestamp": format_timestamp(doc.metadata["start_time"]),
+                    "quote": doc.page_content,
                 })
 
         # Only label sources as verified when the generated answer actually

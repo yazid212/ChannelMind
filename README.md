@@ -38,6 +38,7 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries and design decision
 
 - Video-first indexing: paste one public video URL, use its free captions when available, or recognize speech locally from downloaded audio
 - Exact timestamp citations linked back to YouTube
+- Inspectable transcript passages beside answer citations and a searchable video transcript reader
 - Multi-video retrieval with cross-video diversification
 - Isolated, expiring workspaces for public visitors
 - Background channel ingestion with job polling
@@ -133,6 +134,7 @@ The recommended v1 setup is Vercel for `web/`, Railway for the API, worker and p
 | `POST` | `/api/v1/workspaces/{id}/expansions` | Find and index relevant older videos for a question |
 | `GET` | `/api/v1/jobs/{id}` | Poll tenant-scoped ingestion status |
 | `POST` | `/api/v1/workspaces/{id}/chat` | Retrieve context and generate a cited answer |
+| `GET` | `/api/v1/workspaces/{id}/videos/{video_id}/transcript` | Read one indexed video's transcript with the signed workspace token |
 | `DELETE` | `/api/v1/workspaces/{id}` | Delete the workspace vector partition |
 
 Production API documentation is disabled by default. It remains available at `/docs` during local development.

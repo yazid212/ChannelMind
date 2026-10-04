@@ -1,6 +1,7 @@
 """FastAPI entrypoint for container deployment."""
 
 import os
+import re
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -12,7 +13,7 @@ from openai import APIConnectionError, APIStatusError
 from config import LLM_PROVIDER, LOCAL_WHISPER_MODEL, VECTOR_BACKEND
 from src.rag import YouTubeRAG
 from src.embedder import Embedder
-from src.utils import log_exception_safely
+from src.utils import format_timestamp, log_exception_safely
 
 from .jobs import JobManager
 from .export_routes import create_export_router
@@ -20,6 +21,8 @@ from .rate_limit import RateLimiter
 from .schemas import (
     ChatRequest,
     ChatResponse,
+    TranscriptChunkResponse,
+    TranscriptResponse,
     ExpansionRequest,
     IngestionRequest,
     VideoIngestionRequest,
@@ -198,6 +201,37 @@ def job_status(
     if result is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobResponse(job_id=job_id, **result)
+
+
+@app.get(
+    f"{settings.api_prefix}/workspaces/{{workspace_id}}/videos/{{video_id}}/transcript",
+    response_model=TranscriptResponse,
+)
+async def video_transcript(
+    workspace_id: str,
+    video_id: str,
+    request: Request,
+    identity: WorkspaceIdentity = Depends(require_workspace),
+) -> TranscriptResponse:
+    _assert_workspace(workspace_id, identity)
+    limiter.check("transcript", client_address(request), limit=30, window=60)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    embedder = await run_in_threadpool(Embedder, "youtube_transcripts", workspace_id)
+    documents = await run_in_threadpool(embedder.transcript_chunks, video_id)
+    if not documents:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return TranscriptResponse(
+        video_id=video_id,
+        title=documents[0].metadata["title"],
+        transcript_source=documents[0].metadata.get("transcript_source", "unknown"),
+        chunks=[TranscriptChunkResponse(
+            text=doc.page_content,
+            start_time=doc.metadata["start_time"],
+            timestamp=format_timestamp(int(doc.metadata["start_time"])),
+            url=doc.metadata["url"],
+        ) for doc in documents],
+    )
 
 
 @app.post(

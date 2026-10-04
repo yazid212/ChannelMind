@@ -73,6 +73,14 @@ def test_document_creation():
     assert "url" in docs[0].metadata
 
 
+def test_document_creation_normalizes_fractional_export_timestamps():
+    document = Embedder._document(
+        {"video_id": "abcdefghijk", "title": "Exported lesson"}, ["spoken words"], 65.7,
+    )
+    assert document.metadata["start_time"] == 65
+    assert document.metadata["url"].endswith("&t=65s")
+
+
 def test_ingest_replaces_existing_collection_before_adding_documents():
     embedder = Embedder.__new__(Embedder)
     embedder.vectorstore = Mock()
@@ -162,3 +170,46 @@ def test_indexed_video_ids_reads_only_transcript_metadata():
         where={"document_type": "transcript"},
         include=["metadatas"],
     )
+
+
+def test_transcript_reader_filters_one_video_and_orders_all_chroma_chunks():
+    embedder = Embedder.__new__(Embedder)
+    embedder.backend = "chroma"
+    embedder.vectorstore = Mock()
+    embedder.vectorstore.get.return_value = {
+        "documents": ["Later", "Earlier"],
+        "metadatas": [
+            {"video_id": "abcdefghijk", "start_time": 70, "title": "Demo"},
+            {"video_id": "abcdefghijk", "start_time": 5, "title": "Demo"},
+        ],
+    }
+
+    documents = embedder.transcript_chunks("abcdefghijk")
+
+    assert [doc.page_content for doc in documents] == ["Earlier", "Later"]
+    embedder.vectorstore.get.assert_called_once_with(
+        where={"$and": [{"document_type": "transcript"}, {"video_id": "abcdefghijk"}]},
+        include=["documents", "metadatas"],
+    )
+
+
+def test_transcript_reader_qdrant_scroll_keeps_workspace_and_video_filter():
+    embedder = Embedder.__new__(Embedder)
+    embedder.backend = "qdrant"
+    embedder.workspace_key = "tenant-a"
+    embedder.collection_name = "shared"
+    embedder._qdrant_models = models
+    embedder.vectorstore = Mock()
+    embedder.vectorstore.scroll.side_effect = [
+        ([Mock(payload={"page_content": "Later", "title": "Demo", "start_time": 70})], "next"),
+        ([Mock(payload={"page_content": "Earlier", "title": "Demo", "start_time": 5})], None),
+    ]
+
+    documents = embedder.transcript_chunks("abcdefghijk")
+
+    assert [doc.page_content for doc in documents] == ["Earlier", "Later"]
+    first = embedder.vectorstore.scroll.call_args_list[0].kwargs
+    assert [(condition.key, condition.match.value) for condition in first["scroll_filter"].must] == [
+        ("workspace_id", "tenant-a"), ("document_type", "transcript"), ("video_id", "abcdefghijk"),
+    ]
+    assert embedder.vectorstore.scroll.call_args_list[1].kwargs["offset"] == "next"

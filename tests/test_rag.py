@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
 from src.rag import YouTubeRAG
+from src.utils import format_timestamp
 
 
 def _rag_with_test_doubles():
@@ -42,6 +43,9 @@ def test_ask_retrieves_once_and_reuses_documents_for_sources():
     assert prompt_input["context"] == "Relevant transcript chunk"
     assert "grounded answer" in result["answer"]
     assert result["sources"][0]["timestamp"] == "01:05"
+    assert result["sources"][0]["quote"] == "Relevant transcript chunk"
+    assert result["sources"][0]["video_id"] == "abc123"
+    assert result["sources"][0]["start_time"] == 65
     assert result["usage"]["total_tokens"] == 150
 
 
@@ -49,6 +53,10 @@ def test_source_verification_tolerates_title_punctuation_changes():
     answer = "According to [L-3 | Python variables and data types] at 10:32, variables store values."
     assert YouTubeRAG._source_mentioned(answer, "L-3 | Python variables and data types |", "10:32")
     assert not YouTubeRAG._source_mentioned(answer, "L-4 | Type casting |", "10:32")
+
+
+def test_fractional_export_timestamps_format_as_whole_seconds():
+    assert format_timestamp(65.7) == "01:05"
 
 
 def test_missing_evidence_gets_labeled_general_knowledge_answer_without_sources():

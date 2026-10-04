@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { api, ChatResult, ExportImport, JobResult, Source, Usage, Workspace } from "@/lib/api";
+import TranscriptReader from "./transcript-reader";
 
 type Status = "booting" | "idle" | "ingesting" | "ready" | "error";
 type Message = {
@@ -18,6 +19,7 @@ type SavedWorkspace = {
   importedChannel: string;
   importedKind: "video" | "channel";
   transcriptSource: "youtube_captions" | "local_speech_recognition" | "";
+  videoId?: string;
 };
 
 function saveWorkspaceSession(value: SavedWorkspace) {
@@ -40,6 +42,8 @@ export default function Home() {
   const [channel, setChannel] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [transcriptSource, setTranscriptSource] = useState<"youtube_captions" | "local_speech_recognition" | "">("");
+  const [videoId, setVideoId] = useState("");
+  const [selectedSource, setSelectedSource] = useState<{ videoId: string; startTime: number } | null>(null);
   const [maxVideos, setMaxVideos] = useState(5);
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -106,6 +110,7 @@ export default function Home() {
           setImportedChannel(saved.importedChannel);
           setImportedKind(saved.importedKind);
           setTranscriptSource(saved.transcriptSource);
+          setVideoId(saved.videoId || "");
           setStatus("ready");
         } else setStatus("idle");
       })
@@ -138,6 +143,8 @@ export default function Home() {
     setError("");
     setStatus("ingesting");
     setMessages([]);
+    setSelectedSource(null);
+    setVideoId("");
     try {
       // Keep an imported channel intact when starting a new public-channel search.
       const target = importedChannel ? await api.createWorkspace() : workspace;
@@ -168,6 +175,7 @@ export default function Home() {
     setError("");
     setStatus("ingesting");
     setMessages([]);
+    setSelectedSource(null);
     try {
       const target = importedChannel ? await api.createWorkspace() : workspace;
       setWorkspace(target);
@@ -180,7 +188,8 @@ export default function Home() {
       setImportedChannel(result.title || "YouTube video");
       setImportedKind("video");
       setTranscriptSource(result.transcript_source || "youtube_captions");
-      saveWorkspaceSession({ workspace: target, metrics: nextMetrics, channel, videoUrl, importedChannel: result.title || "YouTube video", importedKind: "video", transcriptSource: result.transcript_source || "youtube_captions" });
+      setVideoId(result.video_id || "");
+      saveWorkspaceSession({ workspace: target, metrics: nextMetrics, channel, videoUrl, importedChannel: result.title || "YouTube video", importedKind: "video", transcriptSource: result.transcript_source || "youtube_captions", videoId: result.video_id });
       setStatus("ready");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to process this video.");
@@ -219,6 +228,8 @@ export default function Home() {
     setError("");
     setStatus("ingesting");
     setMessages([]);
+    setSelectedSource(null);
+    setVideoId("");
     try {
       if (file.size > 60 * 1024 * 1024) throw new Error("Choose an export smaller than 60 MB.");
       const target = await api.createWorkspace();
@@ -366,6 +377,9 @@ export default function Home() {
               <small>{status === "error" ? error : status === "ready" ? (metrics.videos > 0 ? `${metrics.catalog} catalog videos · ${metrics.videos} transcripts ready${importedKind === "video" && transcriptSource ? ` · ${transcriptSource === "local_speech_recognition" ? "local speech recognition" : "YouTube captions"}` : ""}` : `${metrics.catalog} catalog videos · transcripts load when you ask`) : "Each session is isolated and expires automatically."}</small>
             </div>
           </div>
+          {status === "ready" && importedKind === "video" && videoId && (
+            <button type="button" className="browseTranscript" onClick={() => setSelectedSource({ videoId, startTime: 0 })}>Browse searchable transcript →</button>
+          )}
 
           <div className="privacyNote"><span>⌁</span><p><strong>Isolated by design</strong>Your session has its own vector namespace and signed access token.</p></div>
         </aside>
@@ -373,7 +387,7 @@ export default function Home() {
         <section className="chatPanel">
           <div className="panelHeading chatHeading">
             <span className="step">02</span>
-            <div><h2>Ask the {importedChannel ? importedKind : "channel"}</h2><p>Answers include verified timestamp sources.</p></div>
+            <div><h2>Ask the {importedChannel ? importedKind : "channel"}</h2><p>Answers link to their transcript passages.</p></div>
             <div className="metrics"><span>{metrics.catalog}<small>catalog</small></span><span>{metrics.videos}<small>transcripts</small></span><span>{metrics.chunks}<small>chunks</small></span></div>
           </div>
 
@@ -399,11 +413,16 @@ export default function Home() {
                   <div className="answerText">{message.content}</div>
                   {message.sources && message.sources.length > 0 && (
                     <div className="sources">
-                      <strong>Verified moments</strong>
+                      <strong>Transcript sources</strong>
                       {message.sources.map((source) => (
-                        <a href={source.url} target="_blank" rel="noreferrer" key={`${source.url}-${source.timestamp}`}>
-                          <span className="play">▶</span><span>{source.title}</span><time>{source.timestamp}</time>
-                        </a>
+                        <div className="sourceCard" key={`${source.video_id}-${source.start_time}`}>
+                          <div className="sourceHeading"><span>{source.title}</span><time>{source.timestamp}</time></div>
+                          <p>{source.quote}</p>
+                          <div className="sourceActions">
+                            <button type="button" onClick={() => setSelectedSource({ videoId: source.video_id, startTime: source.start_time })}>Read transcript</button>
+                            <a href={source.url} target="_blank" rel="noreferrer">Watch moment ↗</a>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   )}
@@ -422,6 +441,8 @@ export default function Home() {
           </form>
         </section>
       </section>
+
+      {workspace && selectedSource && <TranscriptReader workspace={workspace} videoId={selectedSource.videoId} initialTime={selectedSource.startTime} onClose={() => setSelectedSource(null)} />}
 
       <footer><span>Built with FastAPI, Qdrant, Redis and Next.js.</span><span>Answers are generated from public transcript data.</span></footer>
     </main>

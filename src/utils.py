@@ -48,8 +48,9 @@ def extract_channel_id(url: str) -> Optional[str]:
     return None
 
 
-def format_timestamp(seconds: int) -> str:
+def format_timestamp(seconds: int | float) -> str:
     """Convert seconds to MM:SS or HH:MM:SS."""
+    seconds = int(seconds)
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
     secs = seconds % 60

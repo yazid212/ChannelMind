@@ -65,6 +65,7 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 17px; heigh
 .statusCard strong, .statusCard small { display: block; }
 .statusCard strong { font-size: 12px; }
 .statusCard small { color: var(--muted); font-size: 10px; margin-top: 2px; line-height: 1.4; }
+.browseTranscript { width: 100%; margin-top: 10px; border: 1px solid var(--ink); border-radius: 7px; padding: 10px; background: var(--acid); color: var(--ink); cursor: pointer; font-size: 11px; font-weight: 700; }
 .privacyNote { margin-top: 24px; border-top: 1px solid #ccc9be; padding-top: 20px; display: flex; gap: 9px; color: var(--muted); }
 .privacyNote > span { color: var(--orange); }
 .privacyNote p { margin: 0; font-size: 10px; line-height: 1.55; }
@@ -96,9 +97,11 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 17px; heigh
 .user .answerText { background: var(--navy); color: white; border-color: var(--navy); border-radius: 13px 4px 13px 13px; }
 .sources { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: white; text-align: left; }
 .sources > strong { display: block; margin-bottom: 6px; font: 500 9px DM Mono, monospace; text-transform: uppercase; letter-spacing: .09em; }
-.sources a { display: grid; grid-template-columns: 22px 1fr auto; gap: 7px; align-items: center; padding: 8px 5px; color: var(--ink); text-decoration: none; border-top: 1px solid #eceae2; font-size: 11px; }
-.sources a:hover span:nth-child(2) { text-decoration: underline; }
-.play { color: var(--orange); font-size: 9px; }
+.sourceCard { border-top: 1px solid #eceae2; padding: 10px 4px; }
+.sourceHeading { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; font-weight: 700; }
+.sourceCard p { margin: 8px 0; color: var(--muted); font-size: 11px; line-height: 1.55; max-height: 5em; overflow: auto; white-space: pre-wrap; }
+.sourceActions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.sourceActions button, .sourceActions a { border: 0; background: transparent; padding: 0; color: #315300; font: 600 10px DM Mono, monospace; text-decoration: underline; cursor: pointer; }
 .sources time { color: #3c5d00; background: #e5f5b5; padding: 3px 5px; border-radius: 3px; font: 500 9px DM Mono, monospace; }
 .usage { margin-top: 7px; color: var(--muted); font: 400 8px DM Mono, monospace; text-transform: uppercase; }
 .thinking { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
@@ -112,11 +115,33 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 17px; heigh
 .composer button:disabled { opacity: .35; cursor: not-allowed; }
 footer { width: min(1420px, 92vw); margin: 0 auto; padding: 24px 0 40px; display: flex; justify-content: space-between; color: var(--muted); font: 400 9px DM Mono, monospace; text-transform: uppercase; letter-spacing: .06em; }
 
+.transcriptOverlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(16,17,15,.68); }
+.transcriptReader { width: min(1100px, 100%); max-height: min(88vh, 900px); overflow: hidden; display: flex; flex-direction: column; border: 1px solid var(--ink); border-radius: 13px; background: var(--card); box-shadow: 8px 8px 0 var(--acid); }
+.transcriptHeader { display: flex; justify-content: space-between; gap: 20px; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.transcriptHeader small { color: var(--muted); font: 500 9px DM Mono, monospace; text-transform: uppercase; }
+.transcriptHeader h2 { margin: 4px 0 0; font-size: 19px; }
+.transcriptClose { border: 0; background: transparent; font-size: 28px; cursor: pointer; }
+.transcriptBody { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.transcriptPlayer { padding: 20px; border-right: 1px solid var(--line); }
+.transcriptPlayer iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: var(--ink); }
+.transcriptPlayer a { display: inline-block; margin-top: 10px; color: #315300; font-size: 11px; }
+.transcriptContent { display: flex; flex-direction: column; min-height: 0; padding: 20px; }
+.transcriptContent input { width: 100%; }
+.transcriptCount { color: var(--muted); font: 500 10px DM Mono, monospace; }
+.transcriptChunks { min-height: 0; overflow: auto; }
+.transcriptChunk { border-top: 1px solid var(--line); padding: 12px 0; }
+.transcriptChunk button { border: 0; padding: 0; background: transparent; color: #315300; font: 600 10px DM Mono, monospace; cursor: pointer; }
+.transcriptChunk p { margin: 6px 0 0; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.transcriptNotice { color: var(--muted); font-size: 12px; }
+
 @media (max-width: 900px) {
   .hero { padding-top: 60px; }
   .workspace { grid-template-columns: 1fr; box-shadow: 6px 6px 0 var(--ink); }
   .controlPanel { border-right: 0; border-bottom: 1px solid var(--ink); }
   .conversation { min-height: 400px; }
+  .transcriptBody { display: block; overflow: auto; }
+  .transcriptPlayer { border-right: 0; border-bottom: 1px solid var(--line); }
+  .transcriptContent { max-height: 50vh; }
 }
 @media (max-width: 560px) {
   .topbar { padding: 0 18px; }.topMeta { font-size: 0; }.topMeta a { font-size: 9px; }
