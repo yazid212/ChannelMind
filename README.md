@@ -44,6 +44,7 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries and design decision
 - Background channel ingestion with job polling
 - Hybrid retrieval: catalog the channel once, index a small recent set, then fetch relevant older transcripts on demand
 - Chrome extension for whole public-channel transcript exports, resumable progress, automatic ZIP download, and file import into ChannelMind; optional owner-authorized caption mode
+- Export coverage reports with transcribed, unavailable, failed, pending and indexed counts, reason totals, and paginated issue details
 - Fixed-window abuse limits backed by Redis in production
 - Named, configurable LLM models and token telemetry
 - Prompt-injection boundary around untrusted transcript text
@@ -134,6 +135,7 @@ The recommended v1 setup is Vercel for `web/`, Railway for the API, worker and p
 | `POST` | `/api/v1/workspaces/{id}/expansions` | Find and index relevant older videos for a question |
 | `GET` | `/api/v1/jobs/{id}` | Poll tenant-scoped ingestion status |
 | `POST` | `/api/v1/workspaces/{id}/chat` | Retrieve context and generate a cited answer |
+| `GET` | `/api/v1/exports/{id}/issues` | Page through unresolved videos in a signed export workspace |
 | `GET` | `/api/v1/workspaces/{id}/videos/{video_id}/transcript` | Read one indexed video's transcript with the signed workspace token |
 | `DELETE` | `/api/v1/workspaces/{id}` | Delete the workspace vector partition |
 

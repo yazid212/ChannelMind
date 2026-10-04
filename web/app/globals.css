@@ -66,6 +66,18 @@ input[type="range"]::-webkit-slider-thumb { appearance: none; width: 17px; heigh
 .statusCard strong { font-size: 12px; }
 .statusCard small { color: var(--muted); font-size: 10px; margin-top: 2px; line-height: 1.4; }
 .browseTranscript { width: 100%; margin-top: 10px; border: 1px solid var(--ink); border-radius: 7px; padding: 10px; background: var(--acid); color: var(--ink); cursor: pointer; font-size: 11px; font-weight: 700; }
+.coveragePanel { margin-top: 17px; border: 1px solid #bbb8ae; border-radius: 9px; padding: 13px; background: var(--card); }
+.coveragePanel > strong { display: block; margin-bottom: 8px; font: 600 10px DM Mono, monospace; text-transform: uppercase; letter-spacing: .06em; }
+.coveragePanel p { margin: 5px 0; font-size: 11px; line-height: 1.5; }
+.coveragePanel small { display: block; margin-top: 10px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.coverageReasons { margin: 10px 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.coverageReasons li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.coverageReasons b { color: var(--ink); }
+.coverageIssues { margin-top: 10px; font-size: 10px; }
+.coverageIssues summary { cursor: pointer; font-weight: 700; }
+.coverageIssues ul { max-height: 200px; overflow: auto; padding-left: 16px; line-height: 1.55; }
+.coverageIssues li { margin-bottom: 5px; overflow-wrap: anywhere; }
+.coverageIssues button { border: 1px solid var(--ink); border-radius: 5px; padding: 7px 9px; background: var(--acid); cursor: pointer; font-size: 10px; }
 .privacyNote { margin-top: 24px; border-top: 1px solid #ccc9be; padding-top: 20px; display: flex; gap: 9px; color: var(--muted); }
 .privacyNote > span { color: var(--orange); }
 .privacyNote p { margin: 0; font-size: 10px; line-height: 1.55; }

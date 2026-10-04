@@ -73,6 +73,7 @@ def test_job_resumes_after_quota_without_redownloading_and_exports_full_zip(expo
     collect_channel(identity.workspace_id, run_id)
     paused = client.get(f"/api/v1/exports/{run_id}").json()
     assert (paused["status"], paused["total"], paused["exported"]) == ("paused", 3, 1)
+    assert paused["coverage"]["pending"] == 2
     assert paused["error_code"] == "quota"
     partial = client.get(f"/api/v1/exports/{run_id}/download?format=json").json()
     assert partial["complete"] is False
@@ -80,6 +81,10 @@ def test_job_resumes_after_quota_without_redownloading_and_exports_full_zip(expo
     collect_channel(identity.workspace_id, run_id)
     finished = client.get(f"/api/v1/exports/{run_id}").json()
     assert (finished["status"], finished["processed"], finished["exported"], finished["skipped"]) == ("finished", 3, 2, 1)
+    assert finished["coverage"]["transcribed"] == 2
+    assert finished["coverage"]["unavailable"] == 1
+    assert finished["coverage"]["pending"] == 0
+    assert finished["coverage"]["reasons"] == [{"reason": "no_captions", "count": 1}]
     assert [call.args[0] for call in youtube.caption.call_args_list] == ["a" * 11, "b" * 11, "b" * 11, "c" * 11]
     assert youtube.video_page.call_count == 2
     assert "segments" not in json.dumps(finished)
@@ -98,10 +103,57 @@ def test_exports_cannot_be_read_or_resumed_by_another_workspace(export_system):
     client, app, _, identity, _, _ = export_system
     run_id = client.post("/api/v1/exports", json={"channel_id": CHANNEL_ID}).json()["id"]
     app.dependency_overrides[require_workspace] = lambda: WorkspaceIdentity(str(uuid.uuid4()), identity.expires_at)
-    for suffix in ("", "/download"):
+    for suffix in ("", "/download", "/issues"):
         assert client.get(f"/api/v1/exports/{run_id}{suffix}").status_code == 404
     for suffix in ("resume", "cancel", "index", "handoff"):
         assert client.post(f"/api/v1/exports/{run_id}/{suffix}").status_code == 404
+
+
+def test_large_export_report_accounts_for_every_video_and_paginates_issues(export_system):
+    client, _, store, identity, _, _ = export_system
+    videos = []
+    for number in range(200):
+        video = {"video_id": f"{number:011d}", "title": f"Video {number}"}
+        if number < 43:
+            video["status"] = "exported"
+        elif number < 143:
+            video.update(status="skipped", reason="no_captions")
+        elif number < 150:
+            video.update(status="skipped", reason="caption_parse_error")
+        else:
+            video["status"] = "pending"
+        videos.append(video)
+    run_id = str(uuid.uuid4())
+    run = {"id": run_id, "workspace_id": identity.workspace_id,
+           "channel": {"id": CHANNEL_ID, "title": "Large channel"},
+           "status": "paused", "message": "Resume to continue", "catalog_complete": True,
+           "expires_at": identity.expires_at, "videos": videos,
+           "indexed_video_ids": [video["video_id"] for video in videos[:10]]}
+    store.put(run_key(identity.workspace_id, run_id), run, identity.expires_at)
+
+    report = client.get(f"/api/v1/exports/{run_id}").json()
+    coverage = report["coverage"]
+    assert {key: coverage[key] for key in ("discovered", "transcribed", "unavailable", "failed", "pending", "indexed")} == {
+        "discovered": 200, "transcribed": 43, "unavailable": 100,
+        "failed": 7, "pending": 50, "indexed": 10,
+    }
+    assert coverage["discovered"] == sum(coverage[key] for key in ("transcribed", "unavailable", "failed", "pending"))
+    assert coverage["reasons"] == [
+        {"reason": "no_captions", "count": 100},
+        {"reason": "caption_parse_error", "count": 7},
+    ]
+    assert report["issue_total"] == 157
+    assert len(report["issues"]) == 25
+    page = client.get(f"/api/v1/exports/{run_id}/issues?offset=100&limit=50").json()
+    assert page["total"] == 157
+    assert len(page["items"]) == 50
+    assert page["items"][0]["outcome"] == "failed"
+    assert page["items"][-1]["outcome"] == "pending"
+    all_issues = [item for offset in range(0, 157, 50)
+                  for item in client.get(f"/api/v1/exports/{run_id}/issues?offset={offset}&limit=50").json()["items"]]
+    assert len(all_issues) == len({item["video_id"] for item in all_issues}) == 157
+    assert client.get(f"/api/v1/exports/{run_id}/issues?outcome=unavailable").json()["total"] == 100
+    assert client.get(f"/api/v1/exports/{run_id}/issues?limit=101").status_code == 422
 
 
 def test_export_requires_account_channel_and_download_rejects_inflight_job(export_system):
@@ -212,7 +264,9 @@ def test_indexing_imports_real_segments_and_preserves_partial_export_status(expo
     embedder = Mock()
     embedder._create_documents.return_value = [Mock(), Mock()]
     monkeypatch.setattr(src.embedder, "Embedder", lambda **_: embedder)
-    assert client.post(f"/api/v1/exports/{run_id}/index").status_code == 202
+    queued = client.post(f"/api/v1/exports/{run_id}/index")
+    assert queued.status_code == 202
+    assert queued.json()["status"] == "queued"
     collect_channel(identity.workspace_id, run_id, "index")
     imported = client.get(f"/api/v1/exports/{run_id}").json()
     assert imported["indexed"] is True
@@ -270,11 +324,16 @@ def test_public_export_collects_more_than_ten_unowned_videos_and_zip_imports(exp
         content=zip_data, headers={"Content-Type": "application/zip"},
     )
     assert imported.status_code == 202
+    assert imported.json()["status"] == "queued"
     import_id = imported.json()["id"]
     collect_channel(identity.workspace_id, import_id, "index")
     done = client.get(f"/api/v1/exports/{import_id}").json()
     assert done["indexed"] is True
     assert done["metrics"] == {"catalog": 12, "videos": 12, "chunks": 12}
+    code = client.post(f"/api/v1/exports/{import_id}/handoff").json()["code"]
+    claimed = client.post("/api/v1/export-handoffs/claim", json={"code": code}).json()
+    assert claimed["coverage"]["discovered"] == 12
+    assert claimed["coverage"]["indexed"] == 12
     assert embedder.ingest.call_count == 12
     assert store.get(run_key(identity.workspace_id, import_id))["index_workspace_id"] == identity.workspace_id
 
@@ -342,6 +401,9 @@ def test_public_playlist_export_paginates_and_imports_mixed_channel_videos(expor
     collect_channel(identity.workspace_id, run_id)
     result = client.get(f"/api/v1/exports/{run_id}").json()
     assert (result["status"], result["total"], result["exported"]) == ("finished", 120, 120)
+    assert result["coverage"]["discovered"] == 120
+    assert result["coverage"]["transcribed"] == 120
+    assert result["coverage"]["pending"] == 0
     assert result["channel"] == {"id": playlist_id, "title": "A mixed creator playlist", "kind": "playlist"}
     assert extractor.youtube.playlistItems.return_value.list.call_count == 3
     extractor.youtube.channels.assert_not_called()
@@ -382,9 +444,11 @@ def test_public_playlist_partial_resume_reuses_transcript(export_system, monkeyp
     started = client.post("/api/v1/public-exports/resume-upload", content=json.dumps(bundle))
     assert started.status_code == 202
     run_id = started.json()["id"]
+    assert started.json()["coverage"]["pending"] == 1
     collect_channel(identity.workspace_id, run_id)
     result = client.get(f"/api/v1/exports/{run_id}").json()
     assert (result["status"], result["exported"]) == ("finished", 2)
+    assert result["coverage"]["pending"] == 0
     extractor.ytt_api.list.assert_called_once_with(ids[1])
     downloaded = client.get(f"/api/v1/exports/{run_id}/download?format=json").json()
     assert downloaded["channel"]["kind"] == "playlist"
@@ -412,6 +476,35 @@ def test_file_import_rejects_malformed_or_unusable_bundles(export_system):
     assert client.post(path, content=json.dumps(bundle)).status_code == 400
     bundle["videos"][0].update(status="exported", segments=[{"text": "Hi", "start": -1, "duration": 1}])
     assert client.post(path, content=json.dumps(bundle)).status_code == 400
+
+
+def test_file_import_preserves_missing_video_reasons_in_coverage(export_system, monkeypatch):
+    client, _, _, identity, _, _ = export_system
+    bundle = {"schema": "channelmind.channel-transcripts", "version": 1,
+              "channel": {"id": CHANNEL_ID, "title": "Mixed coverage"},
+              "videos": [
+                  {"video_id": "a" * 11, "title": "Available", "status": "exported",
+                   "segments": [{"text": "Explained", "start": 2, "duration": 1}]},
+                  {"video_id": "b" * 11, "title": "No captions", "status": "skipped", "reason": "no_captions"},
+                  {"video_id": "c" * 11, "title": "Unavailable", "status": "skipped", "reason": "VideoUnavailable"},
+              ]}
+    import src.embedder
+    embedder = Mock()
+    embedder._create_documents.return_value = [Mock()]
+    monkeypatch.setattr(src.embedder, "Embedder", lambda **_: embedder)
+
+    started = client.post(f"/api/v1/workspaces/{identity.workspace_id}/imports", content=json.dumps(bundle))
+    assert started.status_code == 202
+    assert started.json()["coverage"]["discovered"] == 3
+    run_id = started.json()["id"]
+    collect_channel(identity.workspace_id, run_id, "index")
+    report = client.get(f"/api/v1/exports/{run_id}").json()
+    assert report["coverage"]["indexed"] == 1
+    assert report["coverage"]["unavailable"] == 2
+    assert report["coverage"]["reasons"] == [
+        {"reason": "VideoUnavailable", "count": 1},
+        {"reason": "no_captions", "count": 1},
+    ]
 
 
 def test_public_export_rejects_video_urls(export_system):

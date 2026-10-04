@@ -60,7 +60,7 @@ ChannelMind-COLLECTION_ID.zip
   transcripts/VIDEO_ID.txt     One file for each successfully exported video
 ```
 
-JSON uses `schema: channelmind.channel-transcripts`, `version: 1`. Playlist bundles include `channel.kind: "playlist"` and `source: "youtube-public-playlist-transcripts"`; older channel bundles remain compatible. Segment timestamps are in seconds, with fractional precision preserved. A manifest entry remains for each discovered video, including missing, inaccessible or pending transcripts. `complete` means all discovered videos were processed; it does not mean every video had captions. Imports accept finished ZIP or JSON bundles up to 60 MB.
+JSON uses `schema: channelmind.channel-transcripts`, `version: 1`. Playlist bundles include `channel.kind: "playlist"` and `source: "youtube-public-playlist-transcripts"`; older channel bundles remain compatible. Segment timestamps are in seconds, with fractional precision preserved. A manifest entry remains for each discovered video, including missing, inaccessible or pending transcripts. The dashboard reconciles every discovered video as transcribed, unavailable, failed or pending, with reason totals and a paginated list of unresolved videos. Indexed is a subset of transcribed videos after choosing **Use in ChannelMind**. `complete` means all discovered videos were processed; it does not mean every video had captions. Imports accept finished ZIP or JSON bundles up to 60 MB.
 
 ## Quota and recovery
 

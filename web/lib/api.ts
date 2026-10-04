@@ -9,7 +9,20 @@ export type ExportImport = {
   expires_at: number;
   channel: { id: string; title: string; kind?: "playlist" };
   metrics: { catalog: number; videos: number; chunks: number };
+  coverage?: ExportCoverage;
+  report_id?: string;
 };
+
+export type ExportCoverage = {
+  discovered: number;
+  transcribed: number;
+  unavailable: number;
+  failed: number;
+  pending: number;
+  indexed: number;
+  reasons: Array<{ reason: string; count: number }>;
+};
+export type ExportIssue = { video_id: string; title: string; reason: string; outcome: "unavailable" | "failed" | "pending" };
 
 export type Source = { video_id: string; title: string; url: string; start_time: number; timestamp: string; quote: string };
 export type TranscriptChunk = { text: string; start_time: number; timestamp: string; url: string };
@@ -40,6 +53,10 @@ export type TranscriptImportJob = {
   message: string;
   indexed: boolean;
   indexed_count: number;
+  coverage: ExportCoverage;
+  catalog_complete: boolean;
+  issue_total: number;
+  issues: ExportIssue[];
   metrics?: { catalog: number; videos: number; chunks: number };
   channel: { id: string; title: string; kind?: "playlist" };
 };
@@ -90,6 +107,11 @@ export const api = {
     ),
   exportStatus: (workspace: Workspace, exportId: string) =>
     request<TranscriptImportJob>(`/api/v1/exports/${exportId}`, { method: "GET" }, workspace.token),
+  exportIssues: (workspace: Workspace, exportId: string, offset: number) =>
+    request<{ total: number; offset: number; items: ExportIssue[] }>(
+      `/api/v1/exports/${exportId}/issues?offset=${offset}&limit=50`,
+      { method: "GET" }, workspace.token,
+    ),
   resumeExport: (workspace: Workspace, exportId: string) =>
     request<TranscriptImportJob>(`/api/v1/exports/${exportId}/resume`, { method: "POST" }, workspace.token),
   claimExport: (code: string) => request<ExportImport>("/api/v1/export-handoffs/claim", {

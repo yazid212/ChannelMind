@@ -51,6 +51,8 @@ export function authCode(returnedUrl, redirectUri, expectedState) {
 }
 
 export function progressLabel(run) {
-  if (!run.catalog_complete) return `Discovering videos · ${run.total} found`;
-  return `${run.processed} / ${run.total} processed · ${run.exported} transcripts · ${run.skipped} unavailable · ${run.total - run.processed} pending`;
+  const coverage = run.coverage;
+  if (!run.catalog_complete) return `Discovering videos · ${run.total} found${coverage?.transcribed ? ` · ${coverage.transcribed} transcribed` : ""}`;
+  if (!coverage) return `${run.processed} / ${run.total} processed · ${run.exported} transcripts · ${run.skipped} unavailable · ${run.total - run.processed} pending`;
+  return `${coverage.discovered} found · ${coverage.transcribed} transcribed · ${coverage.unavailable} unavailable · ${coverage.failed} failed · ${coverage.pending} pending · ${coverage.indexed} indexed`;
 }

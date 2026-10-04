@@ -41,11 +41,11 @@
         <div id="job" hidden aria-live="polite">
           <span id="state" class="badge">Queued</span><h3 id="job-title"></h3>
           <p id="message"></p><progress id="progress" max="100" value="0"></progress>
-          <p id="counts"></p><p id="partial" class="error" hidden></p><p id="expiry" class="hint"></p>
+          <p id="counts"></p><p id="reason-counts" class="hint"></p><p id="partial" class="error" hidden></p><p id="expiry" class="hint"></p>
           <div class="actions"><button id="resume" hidden>Resume export</button><button id="cancel" class="quiet" hidden>Stop export</button></div>
           <div id="downloads" class="actions" hidden><button data-format="zip">Download ZIP</button><button data-format="txt">Download TXT</button><button data-format="json">Download JSON</button></div>
           <button id="open-app" class="primary" hidden>Use in ChannelMind →</button>
-          <details id="issues" hidden><summary>Unavailable captions</summary><ul id="issue-list"></ul></details>
+          <details id="issues" hidden><summary>Videos without transcripts</summary><ul id="issue-list"></ul><button id="more-issues" type="button" hidden>Show more videos</button></details>
         </div>
         <p id="error" class="error" role="alert" hidden></p>
       </section>

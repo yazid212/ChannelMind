@@ -21,7 +21,7 @@ An [MIT-licensed interactive transcript player](https://github.com/hyperaudio/hy
 
 ## Feature order
 
-Implementation status (2026-10-04): items 1 and 2 now have source passage cards, a workspace-scoped transcript API, and a searchable per-video reader with playback seeking. Broader collection status, unified URL routing, explicit answer mode, and evaluation data remain planned.
+Implementation status (2026-10-04): items 1 and 2 have source passage cards, a workspace-scoped transcript API, and a searchable per-video reader with playback seeking. Item 3 now reports export/import coverage and reasons for every discovered video, with paginated issue details and tested resume behavior. A historical 43-of-200 export is needed to classify those specific missing videos; local export sessions have expired. Unified URL routing, explicit answer mode, and evaluation data remain planned.
 
 1. **Evidence people can inspect:** return the supporting segment text and stable video ID/time for each cited source, then show quote cards that seek the video. Validate each displayed quote against stored transcript data rather than trusting generated citation text.
 2. **Transcript visibility:** add an authenticated, tenant-scoped transcript endpoint and a searchable reader for one video. Show caption versus local-recognition provenance and coverage. Do not expose another workspace's transcript.

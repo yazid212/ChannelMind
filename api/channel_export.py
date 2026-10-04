@@ -18,6 +18,10 @@ from .youtube_authorized import AuthorizedYouTube, YouTubeAccessError
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 TIMING = re.compile(r"^((?:\d+:)?\d{2}:\d{2}[.,]\d{3})\s+-->\s+((?:\d+:)?\d{2}:\d{2}[.,]\d{3})")
+UNAVAILABLE_REASONS = {
+    "no_captions", "NoTranscriptFound", "TranscriptsDisabled",
+    "VideoUnavailable", "AgeRestricted", "forbidden", "unavailable",
+}
 
 
 def seconds(timestamp):
@@ -68,10 +72,41 @@ def transcript_key(run, video_id):
     return f"text:{run['workspace_id']}:{run['id']}:{video_id}"
 
 
+def video_outcome(video):
+    if video["status"] == "exported":
+        return "transcribed"
+    if video["status"] == "pending":
+        return "pending"
+    if video["status"] == "skipped":
+        return "unavailable" if video.get("reason") in UNAVAILABLE_REASONS else "failed"
+    return "failed"
+
+
+def coverage_report(run):
+    """Account for every discovered video; indexing is a subset of transcripts."""
+    videos = run["videos"]
+    indexed = set(run.get("indexed_video_ids", []))
+    counts = {"discovered": len(videos), "transcribed": 0, "unavailable": 0,
+              "pending": 0, "failed": 0, "indexed": 0}
+    reasons = {}
+    for video in videos:
+        outcome = video_outcome(video)
+        counts[outcome] += 1
+        if outcome == "transcribed":
+            counts["indexed"] += video["video_id"] in indexed
+        elif outcome in {"unavailable", "failed"}:
+            reason = video.get("reason", "unknown")
+            reasons[reason] = reasons.get(reason, 0) + 1
+    counts["reasons"] = [
+        {"reason": reason, "count": count}
+        for reason, count in sorted(reasons.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    return counts
+
+
 def public_run(run):
     videos = run["videos"]
-    successful = sum(v["status"] == "exported" for v in videos)
-    skipped = sum(v["status"] == "skipped" for v in videos)
+    coverage = coverage_report(run)
     status = run["status"]
     if status in {"running", "indexing"} and not get_export_store().get("worker:" + run["workspace_id"]):
         status = "interrupted"
@@ -80,12 +115,17 @@ def public_run(run):
         "message": run.get("message", ""), "error_code": run.get("error_code"),
         "retry_after": run.get("retry_after"),
         "catalog_complete": run["catalog_complete"], "total": len(videos),
-        "processed": successful + skipped, "exported": successful, "skipped": skipped,
+        "processed": len(videos) - coverage["pending"],
+        "exported": coverage["transcribed"],
+        "skipped": coverage["unavailable"] + coverage["failed"],
+        "coverage": coverage,
         "indexed": run.get("indexed", False), "metrics": run.get("metrics"),
-        "indexed_count": len(run.get("indexed_video_ids", [])),
+        "indexed_count": coverage["indexed"],
         "expires_at": datetime.fromtimestamp(run["expires_at"], timezone.utc).isoformat(),
-        "issues": [{"title": v["title"], "reason": v.get("reason", "unavailable")}
-                   for v in videos if v["status"] == "skipped"][:25],
+        "issue_total": coverage["unavailable"] + coverage["failed"] + coverage["pending"],
+        "issues": [{"video_id": v["video_id"], "title": v["title"],
+                    "reason": v.get("reason", "not_checked_yet"), "outcome": video_outcome(v)}
+                   for v in videos if video_outcome(v) != "transcribed"][:25],
     }
 
 

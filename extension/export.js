@@ -11,10 +11,16 @@ let connected = false;
 let busy = false;
 let polling = false;
 let openWhenReady = false;
+let loadedIssues = [];
+let loadedIssueKey = "";
 
 function showError(error) {
   el("error").textContent = error ? error.message || String(error) : "";
   el("error").hidden = !error;
+}
+
+function reasonLabel(reason) {
+  return reason.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
 }
 
 async function request(path, { method = "GET", body, binary = false } = {}) {
@@ -71,6 +77,8 @@ function render() {
   el("job-title").textContent = run.channel.title;
   el("message").textContent = run.message;
   el("counts").textContent = progressLabel(run);
+  el("reason-counts").textContent = (run.coverage?.reasons || [])
+    .map(({ reason, count }) => `${reasonLabel(reason)}: ${count}`).join(" · ");
   const pending = run.total - run.processed;
   el("partial").hidden = !pending || working;
   el("partial").textContent = pending
@@ -85,13 +93,24 @@ function render() {
   el("open-app").hidden = working || run.exported === 0;
   el("open-app").disabled = busy;
   el("open-app").textContent = run.indexed ? "Open ChannelMind →" : "Use in ChannelMind →";
-  el("issues").hidden = !run.issues?.length;
-  el("issue-list").replaceChildren(...(run.issues || []).map((issue) => {
+  const issueKey = `${run.id}:${run.processed}:${run.skipped}`;
+  if (issueKey !== loadedIssueKey) { loadedIssues = []; loadedIssueKey = issueKey; }
+  const visibleIssues = loadedIssues.length ? loadedIssues : (run.issues || []);
+  el("issues").hidden = !run.issue_total;
+  el("more-issues").hidden = !run.issue_total || visibleIssues.length >= run.issue_total;
+  el("more-issues").disabled = busy;
+  el("issue-list").replaceChildren(...visibleIssues.map((issue) => {
     const li = document.createElement("li");
-    li.textContent = `${issue.title} — ${issue.reason.replaceAll("_", " ")}`;
+    li.textContent = `${issue.title} — ${issue.outcome}: ${reasonLabel(issue.reason)}`;
     return li;
   }));
 }
+
+el("more-issues").addEventListener("click", () => action(async () => {
+  const offset = loadedIssues.length;
+  const page = await request(`/exports/${run.id}/issues?offset=${offset}&limit=50`);
+  loadedIssues = [...loadedIssues, ...page.items];
+}));
 
 async function action(callback) {
   if (busy) return;

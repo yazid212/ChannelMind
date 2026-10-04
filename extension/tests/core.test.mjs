@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { authCode, channelHint, hostPermission, playlistHint, serverOrigin } from "../core.mjs";
+import { authCode, channelHint, hostPermission, playlistHint, progressLabel, serverOrigin } from "../core.mjs";
 
 test("server settings allow HTTPS and local development without URL credentials", () => {
   assert.equal(serverOrigin("https://api.example.com"), "https://api.example.com");
@@ -31,4 +31,15 @@ test("OAuth completion checks both the extension redirect and state", () => {
   assert.throws(() => authCode(redirect + "?code=abc&state=other", redirect, "expected"));
   assert.throws(() => authCode("https://evil.example/oauth2?code=abc&state=expected", redirect, "expected"));
   assert.throws(() => authCode(redirect + "?error=access_denied&state=expected", redirect, "expected"));
+});
+
+test("coverage label distinguishes transcribed, pending, failed and indexed", () => {
+  const label = progressLabel({ catalog_complete: true, coverage: {
+    discovered: 200, transcribed: 43, unavailable: 100, failed: 7, pending: 50, indexed: 10,
+  } });
+  assert.match(label, /200 found/);
+  assert.match(label, /43 transcribed/);
+  assert.match(label, /7 failed/);
+  assert.match(label, /50 pending/);
+  assert.match(label, /10 indexed/);
 });

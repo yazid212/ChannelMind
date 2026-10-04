@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
-import { api, ChatResult, ExportImport, JobResult, Source, Usage, Workspace } from "@/lib/api";
+import { api, ChatResult, ExportCoverage, ExportImport, ExportIssue, JobResult, Source, Usage, Workspace } from "@/lib/api";
 import TranscriptReader from "./transcript-reader";
 
 type Status = "booting" | "idle" | "ingesting" | "ready" | "error";
@@ -36,6 +36,8 @@ const repositoryUrl = process.env.NEXT_PUBLIC_REPOSITORY_URL;
 const pause = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
+const reasonLabel = (reason: string) => reason.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [status, setStatus] = useState<Status>("booting");
@@ -48,6 +50,11 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [metrics, setMetrics] = useState({ catalog: 0, videos: 0, chunks: 0 });
+  const [coverage, setCoverage] = useState<ExportCoverage | null>(null);
+  const [reportJob, setReportJob] = useState<{ workspace: Workspace; id: string } | null>(null);
+  const [issueItems, setIssueItems] = useState<ExportIssue[]>([]);
+  const [issueTotal, setIssueTotal] = useState(0);
+  const [loadingIssues, setLoadingIssues] = useState(false);
   const [error, setError] = useState("");
   const [answering, setAnswering] = useState(false);
   const [answerStage, setAnswerStage] = useState<"catalog" | "answer">("catalog");
@@ -99,6 +106,8 @@ export default function Home() {
         if (notice) setError(notice);
         if (imported) {
           setMetrics(imported.metrics);
+          setCoverage(imported.coverage || null);
+          if (imported.report_id) setReportJob({ workspace: value, id: imported.report_id });
           setChannel(imported.channel.kind === "playlist" ? "" : `https://www.youtube.com/channel/${imported.channel.id}`);
           setImportedChannel(imported.channel.title);
           setImportedKind(imported.channel.kind === "playlist" ? "playlist" : "channel");
@@ -124,6 +133,18 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, answering]);
 
+  useEffect(() => {
+    if (!reportJob) return;
+    let active = true;
+    api.exportStatus(reportJob.workspace, reportJob.id).then((result) => {
+      if (!active) return;
+      setCoverage(result.coverage);
+      setIssueItems(result.issues);
+      setIssueTotal(result.issue_total);
+    }).catch(() => { /* The export report can expire before the workspace. */ });
+    return () => { active = false; };
+  }, [reportJob]);
+
   async function waitForJob(jobId: string, target = workspace, maxAttempts = 300): Promise<JobResult> {
     if (!target) throw new Error("Workspace is not ready.");
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -145,6 +166,10 @@ export default function Home() {
     setMessages([]);
     setSelectedSource(null);
     setVideoId("");
+    setCoverage(null);
+    setReportJob(null);
+    setIssueItems([]);
+    setIssueTotal(0);
     try {
       // Keep an imported channel intact when starting a new public-channel search.
       const target = importedChannel ? await api.createWorkspace() : workspace;
@@ -176,6 +201,10 @@ export default function Home() {
     setStatus("ingesting");
     setMessages([]);
     setSelectedSource(null);
+    setCoverage(null);
+    setReportJob(null);
+    setIssueItems([]);
+    setIssueTotal(0);
     try {
       const target = importedChannel ? await api.createWorkspace() : workspace;
       setWorkspace(target);
@@ -199,22 +228,30 @@ export default function Home() {
 
   async function finishImport(target: Workspace, id: string) {
     let current = await api.exportStatus(target, id);
+    setCoverage(current.coverage);
+    setIssueItems(current.issues);
+    setIssueTotal(current.issue_total);
     for (let attempt = 0; attempt < 1800 && !current.indexed; attempt += 1) {
       if (["paused", "cancelled", "interrupted"].includes(current.status)) {
         throw new Error(current.message || "Transcript import was interrupted.");
       }
       await pause(2000);
       current = await api.exportStatus(target, id);
+      setCoverage(current.coverage);
+      setIssueItems(current.issues);
+      setIssueTotal(current.issue_total);
     }
     if (!current.indexed || !current.metrics) throw new Error("Transcript import did not finish.");
     setMetrics(current.metrics);
     setChannel(current.channel.kind === "playlist" ? "" : `https://www.youtube.com/channel/${current.channel.id}`);
     setImportedChannel(current.channel.title);
     setImportedKind(current.channel.kind === "playlist" ? "playlist" : "channel");
+    setReportJob({ workspace: target, id });
     sessionStorage.setItem("channelmind-import", JSON.stringify({
       workspace_id: target.workspace_id, token: target.token,
       expires_at: Date.parse(target.expires_at) / 1000,
       channel: current.channel, metrics: current.metrics,
+      coverage: current.coverage, report_id: id,
     }));
     sessionStorage.removeItem("channelmind-session");
     setImportJob(null);
@@ -230,12 +267,19 @@ export default function Home() {
     setMessages([]);
     setSelectedSource(null);
     setVideoId("");
+    setCoverage(null);
+    setReportJob(null);
+    setIssueItems([]);
+    setIssueTotal(0);
     try {
       if (file.size > 60 * 1024 * 1024) throw new Error("Choose an export smaller than 60 MB.");
       const target = await api.createWorkspace();
       const started = await api.uploadExport(target, file);
       setWorkspace(target);
       setImportJob({ workspace: target, id: started.id });
+      setCoverage(started.coverage);
+      setIssueItems(started.issues);
+      setIssueTotal(started.issue_total);
       await finishImport(target, started.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to import this transcript file.");
@@ -253,6 +297,20 @@ export default function Home() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to resume import.");
       setStatus("error");
+    }
+  }
+
+  async function loadMoreIssues() {
+    if (!reportJob || loadingIssues || issueItems.length >= issueTotal) return;
+    setLoadingIssues(true);
+    try {
+      const page = await api.exportIssues(reportJob.workspace, reportJob.id, issueItems.length);
+      setIssueItems((current) => [...current, ...page.items]);
+      setIssueTotal(page.total);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load the video report.");
+    } finally {
+      setLoadingIssues(false);
     }
   }
 
@@ -379,6 +437,26 @@ export default function Home() {
           </div>
           {status === "ready" && importedKind === "video" && videoId && (
             <button type="button" className="browseTranscript" onClick={() => setSelectedSource({ videoId, startTime: 0 })}>Browse searchable transcript →</button>
+          )}
+
+          {coverage && (
+            <div className="coveragePanel" aria-label="Collection coverage">
+              <strong>Collection coverage</strong>
+              <p>{coverage.discovered} found · {coverage.transcribed} transcribed · {coverage.indexed} indexed</p>
+              <p>{coverage.unavailable} unavailable · {coverage.failed} failed · {coverage.pending} pending</p>
+              {coverage.reasons.length > 0 && (
+                <ul className="coverageReasons">
+                  {coverage.reasons.map(({ reason, count }) => <li key={reason}><span>{reasonLabel(reason)}</span><b>{count}</b></li>)}
+                </ul>
+              )}
+              {issueItems.length > 0 && (
+                <details className="coverageIssues"><summary>Videos without transcripts ({issueTotal})</summary>
+                  <ul>{issueItems.map((issue) => <li key={issue.video_id}>{issue.title} · {issue.outcome}: {reasonLabel(issue.reason)}</li>)}</ul>
+                  {reportJob && issueItems.length < issueTotal && <button type="button" onClick={loadMoreIssues} disabled={loadingIssues}>{loadingIssues ? "Loading…" : "Show more videos"}</button>}
+                </details>
+              )}
+              {!reportJob && coverage.discovered > coverage.transcribed && <small>Open the extension export to inspect individual videos.</small>}
+            </div>
           )}
 
           <div className="privacyNote"><span>⌁</span><p><strong>Isolated by design</strong>Your session has its own vector namespace and signed access token.</p></div>

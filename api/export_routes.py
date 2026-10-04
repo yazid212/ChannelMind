@@ -9,12 +9,12 @@ import zipfile
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .channel_export import build_download, public_run, run_key, save_run
+from .channel_export import build_download, coverage_report, public_run, run_key, save_run, video_outcome
 from .channel_export import transcript_key
 from .bundle_import import MAX_BUNDLE_BYTES, parse_bundle
 from .export_store import get_export_store
@@ -309,7 +309,7 @@ def create_export_router(jobs, limiter):
         run = {
             "id": str(uuid.uuid4()), "workspace_id": identity.workspace_id,
             "index_workspace_id": identity.workspace_id, "channel": channel,
-            "source": "uploaded-channelmind-export", "status": "indexing",
+            "source": "uploaded-channelmind-export", "status": "queued",
             "operation": "index", "before_index_status": "finished",
             "videos": [], "catalog_complete": True, "indexed": False,
             "created_at": time.time(), "expires_at": expires,
@@ -327,6 +327,26 @@ def create_export_router(jobs, limiter):
     @router.get("/exports/{export_id}")
     def export_status(export_id: uuid.UUID, identity=Depends(require_workspace)):
         return public_run(get_run(identity, export_id))
+
+    @router.get("/exports/{export_id}/issues")
+    def export_issues(
+        export_id: uuid.UUID,
+        outcome: Literal["unavailable", "failed", "pending"] | None = None,
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=50, ge=1, le=100),
+        identity=Depends(require_workspace),
+    ):
+        run = get_run(identity, export_id)
+        issues = [video for video in run["videos"]
+                  if video_outcome(video) in {"unavailable", "failed", "pending"}
+                  and (outcome is None or video_outcome(video) == outcome)]
+        return {
+            "total": len(issues), "offset": offset,
+            "items": [{"video_id": video["video_id"], "title": video["title"],
+                       "reason": video.get("reason", "not_checked_yet"),
+                       "outcome": video_outcome(video)}
+                      for video in issues[offset:offset + limit]],
+        }
 
     @router.post("/exports/{export_id}/resume", status_code=202)
     def resume(export_id: uuid.UUID, request: Request, identity=Depends(require_workspace)):
@@ -383,7 +403,7 @@ def create_export_router(jobs, limiter):
         if run["status"] in {"queued", "running", "indexing"}:
             raise HTTPException(409, "Wait for the export to finish or pause first.")
         store.delete("cancel:" + run["id"])
-        run.update(before_index_status=run["status"], status="indexing", operation="index", message="Preparing ChannelMind…")
+        run.update(before_index_status=run["status"], status="queued", operation="index", message="Waiting for the transcript index worker…")
         save_run(store, run)
         enqueue_run(store, run, "index")
         return public_run(run)
@@ -397,6 +417,7 @@ def create_export_router(jobs, limiter):
         get_export_store().put("handoff:" + code, {
             "workspace_id": run["index_workspace_id"], "expires_at": run["expires_at"],
             "channel": run["channel"], "metrics": run["metrics"],
+            "coverage": coverage_report(run),
         }, min(time.time() + 60, run["expires_at"]))
         return {"code": code}
 
