@@ -175,7 +175,7 @@ class JobManager:
                 "failed": "failed",
                 "stopped": "failed",
                 "canceled": "failed",
-            }.get(str(status), "queued")
+            }.get(getattr(status, "value", status), "queued")
             result = job.result if mapped == "finished" else (
                 get_export_store().get(f"jobprogress:{workspace_id}:{job_id}")
                 if job.meta.get("kind") == "collection" else None

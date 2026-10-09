@@ -2,12 +2,14 @@ from dataclasses import replace
 from concurrent.futures import Future
 import time
 from unittest.mock import patch
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 from pydantic import ValidationError
+from rq.job import JobStatus
 
 from api.schemas import IngestionRequest
 from api import main as api_main
@@ -81,6 +83,20 @@ def test_repeated_playlist_request_reuses_active_local_job():
         second = manager.enqueue_playlist("workspace", "PL" + "x" * 32, int(time.time()) + 300)
     assert first == second
     submit.assert_called_once()
+
+
+@pytest.mark.parametrize("rq_status", [JobStatus.STARTED, JobStatus.FINISHED, JobStatus.FAILED])
+def test_redis_job_status_uses_rq_enum_value(rq_status):
+    manager = JobManager()
+    manager._redis = object()
+    job = SimpleNamespace(
+        meta={"workspace_id": "workspace"},
+        get_status=lambda refresh: rq_status,
+        result={"ok": True},
+    )
+    with patch("rq.job.Job.fetch", return_value=job):
+        result = manager.status("job", "workspace")
+    assert result["status"] == rq_status.value
 
 
 def test_channel_url_variants_reuse_active_workspace_job():
