@@ -2,9 +2,11 @@
 
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { api, ChatResult, ExportCoverage, ExportImport, ExportIssue, JobResult, Source, Usage, Workspace } from "@/lib/api";
+import { detectSource, SourceScope } from "@/lib/source";
 import TranscriptReader from "./transcript-reader";
 
 type Status = "booting" | "idle" | "ingesting" | "ready" | "error";
+type AnswerMode = "transcript" | "general";
 type Message = {
   role: "user" | "assistant";
   content: string;
@@ -14,12 +16,18 @@ type Message = {
 type SavedWorkspace = {
   workspace: Workspace;
   metrics: { catalog: number; videos: number; chunks: number };
-  channel: string;
-  videoUrl: string;
+  sourceUrl: string;
+  channel?: string;
+  videoUrl?: string;
   importedChannel: string;
-  importedKind: "video" | "channel";
+  importedKind: SourceScope;
   transcriptSource: "youtube_captions" | "local_speech_recognition" | "";
   videoId?: string;
+  coverage?: ExportCoverage | null;
+  issues?: ExportIssue[];
+  issueTotal?: number;
+  warning?: string;
+  pendingJobId?: string;
 };
 
 function saveWorkspaceSession(value: SavedWorkspace) {
@@ -36,18 +44,19 @@ const repositoryUrl = process.env.NEXT_PUBLIC_REPOSITORY_URL;
 const pause = (milliseconds: number) =>
   new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
-const reasonLabel = (reason: string) => reason.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+const reasonLabel = (reason: string) => reason === "youtube_access_blocked"
+  ? "YouTube requested bot verification from this connection"
+  : reason.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
 
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [status, setStatus] = useState<Status>("booting");
-  const [channel, setChannel] = useState("");
-  const [videoUrl, setVideoUrl] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
   const [transcriptSource, setTranscriptSource] = useState<"youtube_captions" | "local_speech_recognition" | "">("");
   const [videoId, setVideoId] = useState("");
   const [selectedSource, setSelectedSource] = useState<{ videoId: string; startTime: number } | null>(null);
-  const [maxVideos, setMaxVideos] = useState(5);
   const [question, setQuestion] = useState("");
+  const [answerMode, setAnswerMode] = useState<AnswerMode>("transcript");
   const [messages, setMessages] = useState<Message[]>([]);
   const [metrics, setMetrics] = useState({ catalog: 0, videos: 0, chunks: 0 });
   const [coverage, setCoverage] = useState<ExportCoverage | null>(null);
@@ -56,12 +65,16 @@ export default function Home() {
   const [issueTotal, setIssueTotal] = useState(0);
   const [loadingIssues, setLoadingIssues] = useState(false);
   const [error, setError] = useState("");
+  const [resultWarning, setResultWarning] = useState("");
+  const [processingMessage, setProcessingMessage] = useState("");
   const [answering, setAnswering] = useState(false);
   const [answerStage, setAnswerStage] = useState<"catalog" | "answer">("catalog");
   const [importedChannel, setImportedChannel] = useState("");
   const [importedKind, setImportedKind] = useState<"video" | "channel" | "playlist">("channel");
+  const [activeScope, setActiveScope] = useState<SourceScope | null>(null);
   const [importJob, setImportJob] = useState<{ workspace: Workspace; id: string } | null>(null);
   const initialization = useRef<Promise<{ workspace: Workspace; imported?: ExportImport; saved?: SavedWorkspace; notice?: string }> | null>(null);
+  const resumedJob = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,7 +90,7 @@ export default function Home() {
             sessionStorage.setItem("channelmind-import", JSON.stringify(imported));
           } catch {
             sessionStorage.removeItem("channelmind-import");
-            notice = "This extension export link has expired or was already used. Create a fresh link from the extension to import it; you can still process a video or channel here.";
+            notice = "This extension export link has expired or was already used. Create a fresh link from the extension to import it; you can still process a YouTube URL here.";
           }
         } else {
           try {
@@ -108,19 +121,32 @@ export default function Home() {
           setMetrics(imported.metrics);
           setCoverage(imported.coverage || null);
           if (imported.report_id) setReportJob({ workspace: value, id: imported.report_id });
-          setChannel(imported.channel.kind === "playlist" ? "" : `https://www.youtube.com/channel/${imported.channel.id}`);
+          setSourceUrl(imported.channel.kind === "playlist" ? `https://www.youtube.com/playlist?list=${imported.channel.id}` : `https://www.youtube.com/channel/${imported.channel.id}`);
           setImportedChannel(imported.channel.title);
           setImportedKind(imported.channel.kind === "playlist" ? "playlist" : "channel");
+          setActiveScope(imported.channel.kind === "playlist" ? "playlist" : "channel");
           setStatus("ready");
         } else if (saved) {
           setMetrics(saved.metrics);
-          setChannel(saved.channel);
-          setVideoUrl(saved.videoUrl);
+          setSourceUrl(saved.sourceUrl || saved.videoUrl || saved.channel || "");
           setImportedChannel(saved.importedChannel);
           setImportedKind(saved.importedKind);
+          setActiveScope(saved.importedKind);
           setTranscriptSource(saved.transcriptSource);
           setVideoId(saved.videoId || "");
-          setStatus("ready");
+          setCoverage(saved.coverage || null);
+          setIssueItems(saved.issues || []);
+          setIssueTotal(saved.issueTotal || 0);
+          setResultWarning(saved.warning || "");
+          setStatus(saved.pendingJobId ? "ingesting" : "ready");
+          if (saved.pendingJobId && !resumedJob.current) {
+            resumedJob.current = true;
+            trackSourceJob(value, saved.sourceUrl, saved.importedKind, saved.pendingJobId)
+              .catch((reason) => {
+                setError(reason instanceof Error ? reason.message : "Unable to continue processing.");
+                setStatus("error");
+              });
+          }
         } else setStatus("idle");
       })
       .catch((reason: Error) => {
@@ -149,7 +175,43 @@ export default function Home() {
     if (!target) throw new Error("Workspace is not ready.");
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       await pause(2000);
-      const job = await api.job(target, jobId);
+      let job: Awaited<ReturnType<typeof api.job>>;
+      try {
+        job = await api.job(target, jobId);
+      } catch (error) {
+        if (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")) {
+          setProcessingMessage("Connection to the API was interrupted. Retrying; indexed videos are saved.");
+          continue;
+        }
+        throw error;
+      }
+      if (job.result?.message) setProcessingMessage(job.result.message);
+      if (job.result?.coverage) {
+        setCoverage(job.result.coverage);
+        setIssueItems(job.result.issues || []);
+        setIssueTotal(job.result.issue_total || 0);
+        setMetrics({
+          catalog: job.result.catalog_count ?? job.result.coverage.discovered,
+          videos: job.result.video_count ?? job.result.coverage.indexed,
+          chunks: job.result.chunk_count ?? 0,
+        });
+        if (job.result.title) setImportedChannel(job.result.title);
+        try {
+          const saved = JSON.parse(sessionStorage.getItem("channelmind-session") || "null") as SavedWorkspace | null;
+          if (saved?.pendingJobId === jobId) saveWorkspaceSession({
+            ...saved,
+            metrics: {
+              catalog: job.result.catalog_count ?? job.result.coverage.discovered,
+              videos: job.result.video_count ?? job.result.coverage.indexed,
+              chunks: job.result.chunk_count ?? 0,
+            },
+            importedChannel: job.result.title || saved.importedChannel,
+            coverage: job.result.coverage,
+            issues: job.result.issues,
+            issueTotal: job.result.issue_total,
+          });
+        } catch { /* Storage is optional. */ }
+      }
       if (job.status === "failed") {
         throw new Error(job.result?.message || "Background processing failed. Please try again.");
       }
@@ -158,10 +220,65 @@ export default function Home() {
     throw new Error("Background processing timed out.");
   }
 
-  async function processChannel(event: FormEvent) {
+  async function trackSourceJob(target: Workspace, url: string, scope: SourceScope, jobId: string) {
+    const maxAttempts = scope === "video" ? 3600 : 41400;
+    try {
+      const result = await waitForJob(jobId, target, maxAttempts);
+      completeSource(target, url, scope, result);
+    } catch (reason) {
+      if (scope === "video" || !(reason instanceof Error) || reason.message !== "Job not found") throw reason;
+      setProcessingMessage("Continuing indexed transcripts after the server restart.");
+      const queued = scope === "playlist" ? await api.ingestPlaylist(target, url) : await api.ingest(target, url);
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("channelmind-session") || "null") as SavedWorkspace | null;
+        if (saved?.workspace.workspace_id === target.workspace_id) {
+          saveWorkspaceSession({ ...saved, pendingJobId: queued.job_id });
+        }
+      } catch { /* Storage is optional. */ }
+      const result = await waitForJob(queued.job_id, target, maxAttempts);
+      completeSource(target, url, scope, result);
+    }
+  }
+
+  function completeSource(target: Workspace, url: string, scope: SourceScope, result: JobResult) {
+    const nextMetrics = {
+      catalog: result.catalog_count ?? (scope === "video" ? 1 : 0),
+      videos: result.video_count ?? (scope === "video" ? 1 : 0),
+      chunks: result.chunk_count ?? 0,
+    };
+    const title = result.title || `YouTube ${scope}`;
+    setMetrics(nextMetrics);
+    setCoverage(result.coverage || null);
+    setIssueItems(result.issues || []);
+    setIssueTotal(result.issue_total || 0);
+    setResultWarning(result.warning || "");
+    setImportedChannel(title);
+    setVideoId(scope === "video" ? result.video_id || "" : "");
+    setTranscriptSource(scope === "video" ? result.transcript_source || "youtube_captions" : "");
+    saveWorkspaceSession({ workspace: target, metrics: nextMetrics, sourceUrl: url,
+      importedChannel: title, importedKind: scope,
+      transcriptSource: scope === "video" ? result.transcript_source || "youtube_captions" : "",
+      videoId: scope === "video" ? result.video_id : undefined,
+      coverage: result.coverage, issues: result.issues, issueTotal: result.issue_total,
+      warning: result.warning });
+    setStatus("ready");
+    setProcessingMessage("");
+  }
+
+  async function processSource(event: FormEvent) {
     event.preventDefault();
-    if (!workspace || !channel.trim()) return;
+    if (!workspace || !sourceUrl.trim()) return;
     setError("");
+    setResultWarning("");
+    setProcessingMessage("");
+    let scope: SourceScope;
+    try { scope = detectSource(sourceUrl); }
+    catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Use a public YouTube URL.");
+      setStatus("error");
+      return;
+    }
+    setActiveScope(scope);
     setStatus("ingesting");
     setMessages([]);
     setSelectedSource(null);
@@ -170,58 +287,29 @@ export default function Home() {
     setReportJob(null);
     setIssueItems([]);
     setIssueTotal(0);
+    setMetrics({ catalog: 0, videos: 0, chunks: 0 });
     try {
-      // Keep an imported channel intact when starting a new public-channel search.
-      const target = importedChannel ? await api.createWorkspace() : workspace;
+      let saved: SavedWorkspace | null = null;
+      try { saved = JSON.parse(sessionStorage.getItem("channelmind-session") || "null") as SavedWorkspace | null; }
+      catch { /* Storage is optional. */ }
+      const sameCollection = saved?.workspace.workspace_id === workspace.workspace_id &&
+        saved.sourceUrl.trim() === sourceUrl.trim() && saved.importedKind === scope;
+      const target = status === "idle" || sameCollection ? workspace : await api.createWorkspace();
       setWorkspace(target);
       setImportedChannel("");
-      setImportedKind("channel");
+      setImportedKind(scope);
+      setTranscriptSource("");
       sessionStorage.removeItem("channelmind-import");
       sessionStorage.removeItem("channelmind-session");
-      const queued = await api.ingest(target, channel.trim(), maxVideos);
-      const result = await waitForJob(queued.job_id, target);
-      const nextMetrics = {
-        catalog: result.catalog_count ?? 0,
-        videos: result.video_count ?? 0,
-        chunks: result.chunk_count ?? 0,
-      };
-      setMetrics(nextMetrics);
-      saveWorkspaceSession({ workspace: target, metrics: nextMetrics, channel, videoUrl, importedChannel: "", importedKind: "channel", transcriptSource: "" });
-      setStatus("ready");
+      const queued = scope === "video" ? await api.ingestVideo(target, sourceUrl.trim())
+        : scope === "playlist" ? await api.ingestPlaylist(target, sourceUrl.trim())
+        : await api.ingest(target, sourceUrl.trim());
+      saveWorkspaceSession({ workspace: target, metrics: { catalog: 0, videos: 0, chunks: 0 },
+        sourceUrl, importedChannel: "", importedKind: scope, transcriptSource: "",
+        pendingJobId: queued.job_id });
+      await trackSourceJob(target, sourceUrl, scope, queued.job_id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to process this channel.");
-      setStatus("error");
-    }
-  }
-
-  async function processVideo(event: FormEvent) {
-    event.preventDefault();
-    if (!workspace || !videoUrl.trim()) return;
-    setError("");
-    setStatus("ingesting");
-    setMessages([]);
-    setSelectedSource(null);
-    setCoverage(null);
-    setReportJob(null);
-    setIssueItems([]);
-    setIssueTotal(0);
-    try {
-      const target = importedChannel ? await api.createWorkspace() : workspace;
-      setWorkspace(target);
-      sessionStorage.removeItem("channelmind-import");
-      sessionStorage.removeItem("channelmind-session");
-      const queued = await api.ingestVideo(target, videoUrl.trim());
-      const result = await waitForJob(queued.job_id, target, 3600);
-      const nextMetrics = { catalog: 1, videos: 1, chunks: result.chunk_count ?? 0 };
-      setMetrics(nextMetrics);
-      setImportedChannel(result.title || "YouTube video");
-      setImportedKind("video");
-      setTranscriptSource(result.transcript_source || "youtube_captions");
-      setVideoId(result.video_id || "");
-      saveWorkspaceSession({ workspace: target, metrics: nextMetrics, channel, videoUrl, importedChannel: result.title || "YouTube video", importedKind: "video", transcriptSource: result.transcript_source || "youtube_captions", videoId: result.video_id });
-      setStatus("ready");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to process this video.");
+      setError(reason instanceof Error ? reason.message : `Unable to process this ${scope}.`);
       setStatus("error");
     }
   }
@@ -243,9 +331,11 @@ export default function Home() {
     }
     if (!current.indexed || !current.metrics) throw new Error("Transcript import did not finish.");
     setMetrics(current.metrics);
-    setChannel(current.channel.kind === "playlist" ? "" : `https://www.youtube.com/channel/${current.channel.id}`);
+    setSourceUrl(current.channel.kind === "playlist" ? `https://www.youtube.com/playlist?list=${current.channel.id}` : `https://www.youtube.com/channel/${current.channel.id}`);
     setImportedChannel(current.channel.title);
     setImportedKind(current.channel.kind === "playlist" ? "playlist" : "channel");
+    setActiveScope(current.channel.kind === "playlist" ? "playlist" : "channel");
+    setResultWarning("");
     setReportJob({ workspace: target, id });
     sessionStorage.setItem("channelmind-import", JSON.stringify({
       workspace_id: target.workspace_id, token: target.token,
@@ -271,6 +361,7 @@ export default function Home() {
     setReportJob(null);
     setIssueItems([]);
     setIssueTotal(0);
+    setMetrics({ catalog: 0, videos: 0, chunks: 0 });
     try {
       if (file.size > 60 * 1024 * 1024) throw new Error("Choose an export smaller than 60 MB.");
       const target = await api.createWorkspace();
@@ -317,7 +408,7 @@ export default function Home() {
   async function ask(event: FormEvent, suggestedQuestion?: string) {
     event.preventDefault();
     const nextQuestion = (suggestedQuestion ?? question).trim();
-    if (!workspace || status !== "ready" || !nextQuestion || answering) return;
+    if (!workspace || !canAsk || !nextQuestion || answering) return;
     const previous = messages.map(({ role, content }) => ({ role, content }));
     setMessages((current) => [...current, { role: "user", content: nextQuestion }]);
     setQuestion("");
@@ -325,7 +416,7 @@ export default function Home() {
     setAnswerStage("catalog");
     setError("");
     try {
-      if (!importedChannel) {
+      if (answerMode === "transcript" && !importedChannel && !coverage) {
         const queued = await api.expand(workspace, nextQuestion);
         const expansion = await waitForJob(queued.job_id);
         setMetrics((current) => ({
@@ -335,7 +426,7 @@ export default function Home() {
         }));
       }
       setAnswerStage("answer");
-      const result: ChatResult = await api.chat(workspace, nextQuestion, previous);
+      const result: ChatResult = await api.chat(workspace, nextQuestion, previous, answerMode);
       setMessages((current) => [
         ...current,
         {
@@ -351,6 +442,9 @@ export default function Home() {
       setAnswering(false);
     }
   }
+
+  const canAsk = (answerMode === "general" || metrics.videos > 0) && (status === "ready" ||
+    ((status === "ingesting" || status === "error") && (activeScope === "playlist" || activeScope === "channel")));
 
   return (
     <main>
@@ -381,43 +475,20 @@ export default function Home() {
         <aside className="controlPanel">
           <div className="panelHeading">
             <span className="step">01</span>
-            <div><h2>{importedChannel ? (importedKind === "video" ? "Video ready" : `${importedKind === "playlist" ? "Playlist" : "Channel"} export imported`) : "Build a knowledge base"}</h2><p>{importedChannel || "Start with one public YouTube video."}</p></div>
+            <div><h2>{status === "ready" ? `${(activeScope || importedKind)[0].toUpperCase()}${(activeScope || importedKind).slice(1)} ready` : "Build a knowledge base"}</h2><p>{importedChannel || "Start with a public video, playlist, or channel."}</p></div>
           </div>
-          <form onSubmit={processVideo}>
-            <label htmlFor="video">Video URL</label>
-            <input id="video" value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." disabled={status === "ingesting"} />
-            <small className="rangeHint">Uses free captions when available. Otherwise it downloads audio and recognizes speech on the app server; long videos may take time.</small>
-            <button className="primary" disabled={!workspace || status === "ingesting" || status === "booting"}>
-              {status === "ingesting" ? <><span className="spinner" /> Indexing transcript</> : "Process video →"}
-            </button>
-          </form>
-
-          <div className="importPanel"><h3>Explore a channel</h3><p>Index recent videos and search its catalog for more relevant transcripts.</p></div>
-          <form onSubmit={processChannel}>
-            <label htmlFor="channel">Channel URL or @handle</label>
+          <form onSubmit={processSource}>
+            <label htmlFor="source">YouTube URL or @handle</label>
             <input
-              id="channel"
-              value={channel}
-              onChange={(event) => setChannel(event.target.value)}
-              placeholder="https://youtube.com/@channel"
+              id="source"
+              value={sourceUrl}
+              onChange={(event) => setSourceUrl(event.target.value)}
+              placeholder="Video, playlist, or channel URL"
               disabled={status === "ingesting"}
             />
-            <div className="rangeRow">
-              <label htmlFor="videos">Initial videos to index</label>
-              <output>{maxVideos}</output>
-            </div>
-            <input
-              id="videos"
-              type="range"
-              min="1"
-              max="10"
-              value={maxVideos}
-              onChange={(event) => setMaxVideos(Number(event.target.value))}
-              disabled={status === "ingesting"}
-            />
-            <small className="rangeHint">The channel catalog stays searchable; relevant older transcripts load automatically.</small>
+            <small className="rangeHint">Every video in a playlist or channel is processed. You can ask about indexed videos while the rest continue. When captions are unavailable, local speech recognition takes longer.</small>
             <button className="primary" disabled={!workspace || status === "ingesting" || status === "booting"}>
-              {status === "ingesting" ? <><span className="spinner" /> Indexing transcripts</> : "Process channel →"}
+              {status === "ingesting" ? <><span className="spinner" /> Processing {activeScope || "source"}</> : "Process source →"}
             </button>
           </form>
 
@@ -431,10 +502,13 @@ export default function Home() {
           <div className="statusCard" data-state={status}>
             <span className="statusIcon">{status === "ready" ? "✓" : status === "error" ? "!" : "•"}</span>
             <div>
-              <strong>{status === "ready" ? "Knowledge base ready" : status === "ingesting" ? "Processing videos" : status === "booting" ? "Creating secure workspace" : status === "error" ? "Action needed" : "Ready to process"}</strong>
-              <small>{status === "error" ? error : status === "ready" ? (metrics.videos > 0 ? `${metrics.catalog} catalog videos · ${metrics.videos} transcripts ready${importedKind === "video" && transcriptSource ? ` · ${transcriptSource === "local_speech_recognition" ? "local speech recognition" : "YouTube captions"}` : ""}` : `${metrics.catalog} catalog videos · transcripts load when you ask`) : "Each session is isolated and expires automatically."}</small>
+              <strong>{status === "ready" ? `${activeScope || importedKind} knowledge base ready` : status === "ingesting" ? `Processing ${activeScope || "source"}` : status === "booting" ? "Creating secure workspace" : status === "error" ? "Action needed" : "Ready to process"}</strong>
+              {status === "ingesting" && processingMessage && <small>{processingMessage}</small>}
+              <small>{status === "error" ? error : status === "ready" ? (metrics.videos > 0 ? `${metrics.catalog} catalog videos · ${metrics.videos} transcripts ready${importedKind === "video" && transcriptSource ? ` · ${transcriptSource === "local_speech_recognition" ? "local speech recognition" : "YouTube captions"}` : ""}` : `${metrics.catalog} catalog videos · ${importedKind === "channel" ? "transcripts load when you ask" : "no transcripts indexed"}`) : "Each session is isolated and expires automatically."}</small>
             </div>
           </div>
+          {status === "ready" && resultWarning && <p className="resultWarning">{resultWarning}</p>}
+          {status === "ingesting" && canAsk && <p className="resultWarning">You can ask about the {metrics.videos} transcripts indexed so far. Answers may change as more videos finish.</p>}
           {status === "ready" && importedKind === "video" && videoId && (
             <button type="button" className="browseTranscript" onClick={() => setSelectedSource({ videoId, startTime: 0 })}>Browse searchable transcript →</button>
           )}
@@ -450,12 +524,11 @@ export default function Home() {
                 </ul>
               )}
               {issueItems.length > 0 && (
-                <details className="coverageIssues"><summary>Videos without transcripts ({issueTotal})</summary>
-                  <ul>{issueItems.map((issue) => <li key={issue.video_id}>{issue.title} · {issue.outcome}: {reasonLabel(issue.reason)}</li>)}</ul>
+                <details className="coverageIssues"><summary>Videos not indexed ({issueTotal})</summary>
+                  <ul>{issueItems.map((issue, index) => <li key={`${issue.video_id}-${index}`}>{issue.title} · {issue.outcome}: {reasonLabel(issue.reason)}</li>)}</ul>
                   {reportJob && issueItems.length < issueTotal && <button type="button" onClick={loadMoreIssues} disabled={loadingIssues}>{loadingIssues ? "Loading…" : "Show more videos"}</button>}
                 </details>
               )}
-              {!reportJob && coverage.discovered > coverage.transcribed && <small>Open the extension export to inspect individual videos.</small>}
             </div>
           )}
 
@@ -465,19 +538,26 @@ export default function Home() {
         <section className="chatPanel">
           <div className="panelHeading chatHeading">
             <span className="step">02</span>
-            <div><h2>Ask the {importedChannel ? importedKind : "channel"}</h2><p>Answers link to their transcript passages.</p></div>
+            <div><h2>Ask the {activeScope || importedKind}</h2><p>{answerMode === "transcript" ? "Answers link to their transcript passages." : "General knowledge answers are separate from video evidence."}</p></div>
             <div className="metrics"><span>{metrics.catalog}<small>catalog</small></span><span>{metrics.videos}<small>transcripts</small></span><span>{metrics.chunks}<small>chunks</small></span></div>
           </div>
+
+          <fieldset className="answerMode" disabled={answering}>
+            <legend>Answer source</legend>
+            <label><input type="radio" name="answer-mode" checked={answerMode === "transcript"} onChange={() => { setAnswerMode("transcript"); setMessages([]); setError(""); }} /> Transcript only</label>
+            <label><input type="radio" name="answer-mode" checked={answerMode === "general"} onChange={() => { setAnswerMode("general"); setMessages([]); setError(""); }} /> General knowledge</label>
+            <small>{answerMode === "transcript" ? "Answers use indexed transcripts and cite their passages." : "Model knowledge is labeled and has no video citations."}</small>
+          </fieldset>
 
           <div className="conversation" aria-live="polite">
             {messages.length === 0 && (
               <div className="emptyState">
                 <div className="orb">⌕</div>
-                <h3>{status === "ready" ? `Your ${importedChannel ? importedKind : "channel"} is ready` : "Answers that show their work"}</h3>
-                <p>{status === "ready" ? "Ask anything. Relevant older videos are found and indexed automatically." : "Process a channel to search its ideas, tactics, and explanations."}</p>
+                <h3>{canAsk ? `Ask the ${activeScope || importedKind}` : "Answers that show their work"}</h3>
+                <p>{answerMode === "general" ? "Ask a general question. This mode does not use or cite video transcripts." : canAsk ? (status === "ingesting" ? "Questions use the transcripts indexed so far while the collection continues." : "Ask about the transcripts indexed in this session.") : "Process a YouTube video, playlist, or channel to search its ideas."}</p>
                 <div className="suggestions">
-                  {suggestions.map((item) => (
-                    <button key={item} disabled={status !== "ready"} onClick={(event) => ask(event, item)}>{item}<span>↗</span></button>
+                  {(answerMode === "general" ? [] : suggestions).map((item) => (
+                    <button key={item} disabled={!canAsk} onClick={(event) => ask(event, item)}>{item}<span>↗</span></button>
                   ))}
                 </div>
               </div>
@@ -514,8 +594,8 @@ export default function Home() {
 
           {error && <div className="errorBanner" role="alert">{error}</div>}
           <form className="composer" onSubmit={ask}>
-            <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={status === "ready" ? "Ask a question about the whole channel…" : "Process a channel to begin…"} disabled={status !== "ready" || answering} maxLength={1000} />
-            <button aria-label="Send question" disabled={status !== "ready" || answering || !question.trim()}>↑</button>
+            <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={answerMode === "general" ? "Ask using general knowledge…" : canAsk ? `Ask about ${metrics.videos} indexed transcripts…` : "Process a YouTube source to begin…"} disabled={!canAsk || answering} maxLength={1000} />
+            <button aria-label="Send question" disabled={!canAsk || answering || !question.trim()}>↑</button>
           </form>
         </section>
       </section>

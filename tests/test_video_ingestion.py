@@ -48,6 +48,16 @@ def test_caption_path_preserves_all_segments_without_a_paid_api():
     asr.assert_not_called()
 
 
+def test_collection_title_avoids_a_second_youtube_lookup():
+    with patch("src.video_transcript.YouTubeTranscriptApi") as api, patch(
+        "src.video_transcript._video_title"
+    ) as lookup:
+        api.return_value.fetch.return_value = [SimpleNamespace(text="Words", start=0, duration=1)]
+        result = fetch_video_transcript("kLZgQWjnUz0", "Catalog lesson title")
+    assert result["title"] == "Catalog lesson title"
+    lookup.assert_not_called()
+
+
 def test_missing_captions_use_local_speech_recognition():
     with patch("src.video_transcript.YouTubeTranscriptApi") as api, patch(
         "src.video_transcript.transcribe_video_audio", return_value={"transcript_source": "local_speech_recognition"}
@@ -56,6 +66,18 @@ def test_missing_captions_use_local_speech_recognition():
         result = fetch_video_transcript("kLZgQWjnUz0")
     assert result["transcript_source"] == "local_speech_recognition"
     asr.assert_called_once_with("kLZgQWjnUz0")
+
+
+def test_caption_path_uses_configured_proxy():
+    with patch("src.video_transcript.WEBSHARE_PROXY_USERNAME", "proxy-user"), patch(
+        "src.video_transcript.WEBSHARE_PROXY_PASSWORD", "proxy-password"
+    ), patch("src.video_transcript.WebshareProxyConfig") as proxy_class, patch(
+        "src.video_transcript.YouTubeTranscriptApi"
+    ) as api, patch("src.video_transcript.transcribe_video_audio") as asr:
+        api.return_value.fetch.return_value = [SimpleNamespace(text="Words", start=0, duration=1)]
+        fetch_video_transcript("kLZgQWjnUz0")
+    assert api.call_args.kwargs["proxy_config"] is proxy_class.return_value
+    asr.assert_not_called()
 
 
 def test_local_recognition_offsets_each_bounded_audio_chunk():
@@ -71,3 +93,102 @@ def test_local_recognition_offsets_each_bounded_audio_chunk():
     assert split.call_count == 3
     assert [segment["start"] for segment in result["segments"]] == [2, 902, 1802]
     assert result["transcript_source"] == "local_speech_recognition"
+
+
+def test_audio_download_reextracts_after_transient_youtube_403(tmp_path):
+    from yt_dlp.utils import DownloadError
+    from src.local_transcriber import _download_audio
+
+    def extract(_url, download):
+        if downloader.extract_info.call_count == 1:
+            raise DownloadError("HTTP Error 403: Forbidden")
+        (tmp_path / "audio.webm").write_bytes(b"audio")
+        return {"duration": 10, "title": "Retry lesson"}
+
+    with patch("src.local_transcriber.time.sleep") as sleep, patch(
+        "yt_dlp.YoutubeDL"
+    ) as youtube:
+        downloader = youtube.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = extract
+        path, title, duration = _download_audio("kLZgQWjnUz0", tmp_path)
+
+    assert path == tmp_path / "audio.webm"
+    assert title == "Retry lesson"
+    assert duration == 10
+    assert downloader.extract_info.call_count == 2
+    sleep.assert_called_once_with(3)
+
+
+def test_audio_download_retries_bot_challenge_then_reports_access_block(tmp_path):
+    from yt_dlp.utils import DownloadError
+
+    from src.local_transcriber import VideoAccessBlockedError, _download_audio
+
+    with patch("src.local_transcriber.time.sleep") as sleep, patch(
+        "yt_dlp.YoutubeDL"
+    ) as youtube:
+        downloader = youtube.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = DownloadError(
+            "Sign in to confirm you're not a bot"
+        )
+        with pytest.raises(VideoAccessBlockedError, match="bot verification"):
+            _download_audio("kLZgQWjnUz0", tmp_path)
+
+    assert downloader.extract_info.call_count == 3
+    assert [call.args[0]["extractor_args"]["youtube"]["player_client"]
+            for call in youtube.call_args_list[1:]] == [["android"], ["mweb"]]
+    sleep.assert_not_called()
+
+
+def test_audio_download_uses_android_client_after_bot_challenge(tmp_path):
+    from yt_dlp.utils import DownloadError
+
+    from src.local_transcriber import _download_audio
+
+    def extract(_url, download):
+        if downloader.extract_info.call_count == 1:
+            raise DownloadError("Sign in to confirm you're not a bot")
+        (tmp_path / "audio.webm").write_bytes(b"audio")
+        return {"duration": 10, "title": "Recovered lesson"}
+
+    with patch("yt_dlp.YoutubeDL") as youtube:
+        downloader = youtube.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = extract
+        path, title, duration = _download_audio("kLZgQWjnUz0", tmp_path)
+
+    assert path == tmp_path / "audio.webm"
+    assert title == "Recovered lesson"
+    assert duration == 10
+    assert youtube.call_args_list[1].args[0]["extractor_args"] == {
+        "youtube": {"player_client": ["android"]}
+    }
+
+
+def test_unavailable_video_is_not_retried_as_a_transcription_failure(tmp_path):
+    from yt_dlp.utils import DownloadError
+    from src.local_transcriber import VideoUnavailableError, _download_audio
+
+    with patch("src.local_transcriber.time.sleep") as sleep, patch(
+        "yt_dlp.YoutubeDL"
+    ) as youtube:
+        downloader = youtube.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = DownloadError("Video unavailable")
+        with pytest.raises(VideoUnavailableError):
+            _download_audio("kLZgQWjnUz0", tmp_path)
+    assert downloader.extract_info.call_count == 1
+    sleep.assert_not_called()
+
+
+def test_age_restricted_video_is_not_retried_as_a_transcription_failure(tmp_path):
+    from yt_dlp.utils import DownloadError
+    from src.local_transcriber import VideoRestrictedError, _download_audio
+
+    with patch("src.local_transcriber.time.sleep") as sleep, patch(
+        "yt_dlp.YoutubeDL"
+    ) as youtube:
+        downloader = youtube.return_value.__enter__.return_value
+        downloader.extract_info.side_effect = DownloadError("Sign in to confirm your age")
+        with pytest.raises(VideoRestrictedError):
+            _download_audio("kLZgQWjnUz0", tmp_path)
+    assert downloader.extract_info.call_count == 1
+    sleep.assert_not_called()

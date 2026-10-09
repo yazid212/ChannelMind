@@ -19,8 +19,10 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small")
 LOCAL_WHISPER_DEVICE = os.getenv("LOCAL_WHISPER_DEVICE", "cpu")
 LOCAL_WHISPER_MODEL_PATH = os.getenv("LOCAL_WHISPER_MODEL_PATH", os.path.join("data", "models"))
+LOCAL_AUDIO_TEMP_PATH = os.getenv("LOCAL_AUDIO_TEMP_PATH", os.path.join("data", "tmp"))
+LOCAL_TRANSCRIPTION_WORKERS = max(1, min(_int_env("LOCAL_TRANSCRIPTION_WORKERS", 3 if LOCAL_WHISPER_DEVICE == "cpu" else 1), 4))
+LOCAL_WHISPER_CPU_THREADS = max(1, min(_int_env("LOCAL_WHISPER_CPU_THREADS", 4), 16))
 MAX_VIDEOS = _int_env("MAX_VIDEOS", 10 if APP_ENV == "production" else 50)
-MAX_CATALOG_VIDEOS = max(0, _int_env("MAX_CATALOG_VIDEOS", 2000))
 ON_DEMAND_VIDEOS = max(1, min(_int_env("ON_DEMAND_VIDEOS", 2), 10))
 CATALOG_SEARCH_K = max(
     ON_DEMAND_VIDEOS,
@@ -61,7 +63,7 @@ NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 
 # Chunking and retrieval
 CHUNK_SIZE = _int_env("CHUNK_SIZE", 1000)
-TOP_K = _int_env("TOP_K", 3)
+TOP_K = _int_env("TOP_K", 4)
 DIVERSE_FETCH_K = _int_env("DIVERSE_FETCH_K", 100)
 MAX_HISTORY_MESSAGES = _int_env("MAX_HISTORY_MESSAGES", 4)
 EMBEDDING_MODEL = os.getenv(

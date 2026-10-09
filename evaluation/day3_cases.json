@@ -1,0 +1,24 @@
+{
+  "source_url": "https://www.youtube.com/watch?v=ukSsYecrQDI",
+  "video_id": "ukSsYecrQDI",
+  "cases": [
+    {
+      "id": "engagement_thresholds",
+      "question": "Which engagement metrics does the speaker say trigger viral Instagram carousels, and what are their target percentages?",
+      "answerable": true,
+      "expected_evidence": ["4%", "7%", "shar", "sav"]
+    },
+    {
+      "id": "learn_from_data",
+      "question": "What does the speaker recommend studying after posting a carousel?",
+      "answerable": true,
+      "expected_evidence": ["study the analytic"]
+    },
+    {
+      "id": "unanswerable_javascript",
+      "question": "What does the speaker say about JavaScript promises?",
+      "answerable": false,
+      "expected_evidence": []
+    }
+  ]
+}

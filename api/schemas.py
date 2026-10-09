@@ -14,7 +14,6 @@ class WorkspaceResponse(BaseModel):
 
 class IngestionRequest(BaseModel):
     channel: str = Field(min_length=2, max_length=256)
-    max_videos: int = Field(default=5, ge=1, le=50)
 
     @field_validator("channel")
     @classmethod
@@ -29,8 +28,14 @@ class IngestionRequest(BaseModel):
             "youtube.com",
             "www.youtube.com",
             "m.youtube.com",
-        }:
-            return value
+        } and not (parsed.username or parsed.password or parsed.port):
+            parts = [part for part in parsed.path.split("/") if part]
+            channel_path = (len(parts) in {1, 2} and parts[0].startswith("@")
+                            and (len(parts) == 1 or parts[1] in {"videos", "shorts", "streams", "playlists"}))
+            named_path = (len(parts) in {2, 3} and parts[0] in {"channel", "c", "user"}
+                          and bool(parts[1]) and (len(parts) == 2 or parts[2] in {"videos", "shorts", "streams", "playlists"}))
+            if channel_path or named_path:
+                return value
         raise ValueError("Use a YouTube channel URL, @handle, or channel ID")
 
 
@@ -85,6 +90,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     history: list[ChatMessage] = Field(default_factory=list, max_length=4)
+    mode: Literal["transcript", "general"] = "transcript"
 
 
 class SourceResponse(BaseModel):

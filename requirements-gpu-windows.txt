@@ -1,0 +1,4 @@
+# Optional local GPU runtime for faster-whisper on Windows.
+# Install alongside requirements-api.txt, then set LOCAL_WHISPER_DEVICE=cuda.
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cudnn-cu12==9.8.0.87

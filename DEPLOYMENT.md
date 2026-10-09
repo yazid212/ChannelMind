@@ -87,7 +87,7 @@ In the installed extension's settings, change its API origin to the production A
 ## Release smoke checks
 
 1. Confirm `/healthz` and `/readyz` return 200, and that API and worker logs show a Redis connection. `/readyz` also checks Qdrant and the bundled speech model. It does not spend LLM credit. Verify the per-client IP rate limit as described above.
-2. In a private browser window, process one public video. Confirm job completion, transcript source and chunk count. Ask one short question and open its timestamp citation. Test a caption-free video separately to exercise local speech recognition; cloud hosts can be blocked by YouTube, so this must be checked from the deployed worker.
+2. In a private browser window, process one public video. Confirm job completion, transcript source and chunk count. Ask one short question in **Transcript only** mode and open its timestamp citation. Ask a question absent from the transcript and confirm the answer does not invent a video claim. Switch to **General knowledge**, confirm its answer is labeled and has no video citation, then switch back. Test a caption-free video separately to exercise local speech recognition; cloud hosts can be blocked by YouTube, so this must be checked from the deployed worker.
 3. Test one channel and one playlist export, then import the result. Confirm a second private window cannot read the first window's job or vector results.
 4. Check that expired workspaces disappear after cleanup; restore a Redis and Qdrant backup in staging; set OpenRouter and Railway usage alerts before opening public access.
 

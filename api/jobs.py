@@ -4,7 +4,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 from .settings import get_settings
-from .tasks import expand_workspace, ingest_channel, ingest_video
+from .export_store import get_export_store
+from .tasks import expand_workspace, ingest_channel_full, ingest_playlist, ingest_video
 
 
 @dataclass
@@ -20,6 +21,8 @@ class JobManager:
         self._redis = None
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ingestion")
         self._jobs: dict[str, _LocalJob] = {}
+        self._collection_job_ids: set[str] = set()
+        self._active_collections: dict[str, str] = {}
         self._lock = threading.Lock()
 
         if self._settings.redis_url:
@@ -60,39 +63,63 @@ class JobManager:
                 self._jobs[job_id] = _LocalJob(workspace_id, future)
         return job_id
 
+    def enqueue_playlist(self, workspace_id: str, playlist_id: str, workspace_expires_at: int) -> str:
+        key = workspace_id
+        if self._queue is None:
+            with self._lock:
+                existing_id = self._active_collections.get(key)
+                existing = self._jobs.get(existing_id) if existing_id else None
+                if existing and not existing.future.done():
+                    return existing_id
+                job_id = str(uuid.uuid4())
+                future = self._executor.submit(
+                    ingest_playlist, workspace_id, playlist_id, workspace_expires_at, job_id,
+                )
+                self._jobs[job_id] = _LocalJob(workspace_id, future)
+                self._collection_job_ids.add(job_id)
+                self._active_collections[key] = job_id
+                return job_id
+        job_id = str(uuid.uuid4())
+        job = self._queue.enqueue(
+            ingest_playlist, workspace_id, playlist_id, workspace_expires_at,
+            job_id,
+            job_id=job_id, job_timeout=82800, result_ttl=3600, failure_ttl=3600,
+        )
+        job.meta["workspace_id"] = workspace_id
+        job.meta["kind"] = "collection"
+        job.save_meta()
+        return job_id
+
     def enqueue(
         self,
         workspace_id: str,
         channel: str,
-        max_videos: int,
         workspace_expires_at: int,
     ) -> str:
+        key = workspace_id
+        if self._queue is None:
+            with self._lock:
+                existing_id = self._active_collections.get(key)
+                existing = self._jobs.get(existing_id) if existing_id else None
+                if existing and not existing.future.done():
+                    return existing_id
+                job_id = str(uuid.uuid4())
+                future = self._executor.submit(
+                    ingest_channel_full, workspace_id, channel, workspace_expires_at, job_id,
+                )
+                self._jobs[job_id] = _LocalJob(workspace_id=workspace_id, future=future)
+                self._collection_job_ids.add(job_id)
+                self._active_collections[key] = job_id
+                return job_id
         job_id = str(uuid.uuid4())
-        if self._queue is not None:
-            job = self._queue.enqueue(
-                ingest_channel,
-                workspace_id,
-                channel,
-                max_videos,
-                workspace_expires_at,
-                job_id=job_id,
-                job_timeout=900,
-                result_ttl=3600,
-                failure_ttl=3600,
-            )
-            job.meta["workspace_id"] = workspace_id
-            job.save_meta()
-            return job_id
-
-        future = self._executor.submit(
-            ingest_channel,
-            workspace_id,
-            channel,
-            max_videos,
-            workspace_expires_at,
+        job = self._queue.enqueue(
+            ingest_channel_full,
+            workspace_id, channel, workspace_expires_at, job_id,
+            job_id=job_id, job_timeout=82800, result_ttl=3600, failure_ttl=3600,
         )
-        with self._lock:
-            self._jobs[job_id] = _LocalJob(workspace_id=workspace_id, future=future)
+        job.meta["workspace_id"] = workspace_id
+        job.meta["kind"] = "collection"
+        job.save_meta()
         return job_id
 
     def enqueue_expansion(
@@ -149,7 +176,10 @@ class JobManager:
                 "stopped": "failed",
                 "canceled": "failed",
             }.get(str(status), "queued")
-            result = job.result if mapped == "finished" else None
+            result = job.result if mapped == "finished" else (
+                get_export_store().get(f"jobprogress:{workspace_id}:{job_id}")
+                if job.meta.get("kind") == "collection" else None
+            )
             if mapped == "finished" and isinstance(result, dict) and result.get("ok") is False:
                 mapped = "failed"
             return {"status": mapped, "result": result}
@@ -159,9 +189,12 @@ class JobManager:
         if not local_job or local_job.workspace_id != workspace_id:
             return None
         if local_job.future.running():
-            return {"status": "started", "result": None}
+            progress = get_export_store().get(f"jobprogress:{workspace_id}:{job_id}") if job_id in self._collection_job_ids else None
+            return {"status": "started", "result": progress}
         if not local_job.future.done():
-            return {"status": "queued", "result": None}
+            progress = get_export_store().get(f"jobprogress:{workspace_id}:{job_id}") if job_id in self._collection_job_ids else None
+            return {"status": "queued", "result": progress}
+        self._collection_job_ids.discard(job_id)
         if local_job.future.exception() is not None:
             return {"status": "failed", "result": None}
         result = local_job.future.result()

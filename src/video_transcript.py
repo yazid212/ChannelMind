@@ -2,8 +2,15 @@
 
 import requests
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import WebshareProxyConfig
 
-from config import YOUTUBE_TRANSCRIPT_TRUST_ENV
+from config import (
+    WEBSHARE_PROXY_LOCATIONS,
+    WEBSHARE_PROXY_PASSWORD,
+    WEBSHARE_PROXY_USERNAME,
+    YOUTUBE_TRANSCRIPT_RETRIES,
+    YOUTUBE_TRANSCRIPT_TRUST_ENV,
+)
 from .local_transcriber import transcribe_video_audio
 from .utils import clean_text, log_exception_safely
 
@@ -28,12 +35,20 @@ def _video_title(video_id: str) -> str:
     return f"YouTube video {video_id}"
 
 
-def fetch_video_transcript(video_id: str) -> dict:
+def fetch_video_transcript(video_id: str, title_hint: str | None = None) -> dict:
     """Prefer free captions; transcribe downloaded audio locally when needed."""
     session = requests.Session()
     session.trust_env = YOUTUBE_TRANSCRIPT_TRUST_ENV
+    proxy_config = None
+    if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
+        proxy_config = WebshareProxyConfig(
+            proxy_username=WEBSHARE_PROXY_USERNAME,
+            proxy_password=WEBSHARE_PROXY_PASSWORD,
+            filter_ip_locations=list(WEBSHARE_PROXY_LOCATIONS),
+            retries_when_blocked=YOUTUBE_TRANSCRIPT_RETRIES,
+        )
     try:
-        fetched = YouTubeTranscriptApi(http_client=session).fetch(video_id)
+        fetched = YouTubeTranscriptApi(http_client=session, proxy_config=proxy_config).fetch(video_id)
         segments = []
         for item in fetched:
             text = clean_text(item.text)
@@ -46,7 +61,7 @@ def fetch_video_transcript(video_id: str) -> dict:
         if segments:
             return {
                 "video_id": video_id,
-                "title": _video_title(video_id),
+                "title": title_hint or _video_title(video_id),
                 "transcript": " ".join(item["text"] for item in segments),
                 "segments": segments,
                 "transcript_source": "youtube_captions",
@@ -55,4 +70,7 @@ def fetch_video_transcript(video_id: str) -> dict:
         log_exception_safely("Fetching video captions", error)
     finally:
         session.close()
-    return transcribe_video_audio(video_id)
+    transcript = transcribe_video_audio(video_id)
+    if title_hint:
+        transcript["title"] = title_hint
+    return transcript

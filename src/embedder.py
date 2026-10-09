@@ -307,10 +307,11 @@ class Embedder:
 
     @staticmethod
     def _search_terms(text: str) -> set[str]:
-        common = {"about", "across", "all", "and", "are", "can", "channel", "does",
-                  "explain", "for", "from", "how", "into", "lesson", "lessons",
-                  "main", "playlist", "the", "these", "this", "those", "video",
-                  "videos", "what", "when", "where", "which", "with", "you"}
+        common = {"about", "according", "across", "all", "and", "are", "can",
+                  "channel", "does", "example", "explain", "for", "from", "how",
+                  "into", "lesson", "lessons", "main", "playlist", "speaker",
+                  "the", "these", "this", "those", "tutorial", "video", "videos",
+                  "what", "when", "where", "which", "why", "with", "you"}
         return {term for term in re.findall(r"\w+", text.casefold())
                 if len(term) >= 3 and term not in common}
 
@@ -325,11 +326,24 @@ class Embedder:
         distinct = {term for term in terms if frequency[term] and frequency[term] <= max(1, len(catalog) // 2)}
         if not distinct:
             return []
-        ranked = sorted(
-            ((sum(1 / frequency[term] for term in distinct & words), doc.metadata.get("video_id"))
-             for doc, words in title_terms), key=lambda match: match[0], reverse=True,
-        )
-        return [video_id for score, video_id in ranked if score > 0 and video_id][:min(2, k)]
+        query_words = [word for word in re.findall(r"\w+", query.casefold()) if word in terms]
+        query_pairs = set(zip(query_words, query_words[1:]))
+        ranked = []
+        for doc, words in title_terms:
+            matched = distinct & words
+            if len(matched) < 2 and not any(frequency[term] <= 2 for term in matched):
+                continue
+            title_words = [word for word in re.findall(r"\w+", doc.metadata.get("title", "").casefold())
+                           if word in terms]
+            phrase_match = bool(query_pairs & set(zip(title_words, title_words[1:])))
+            score = sum(1 / frequency[term] for term in matched) + (2 if phrase_match else 0)
+            ranked.append((score, doc.metadata.get("video_id")))
+        ranked.sort(key=lambda match: match[0], reverse=True)
+        if not ranked:
+            return []
+        best_score = ranked[0][0]
+        return [video_id for score, video_id in ranked
+                if video_id and score >= best_score * 0.6][:min(2, k)]
 
     def search(self, query: str, k: int = 5, diversify: bool = False) -> List[Document]:
         fetch_k = max(DIVERSE_FETCH_K, k) if diversify else k
@@ -339,8 +353,10 @@ class Embedder:
         # Playlist/catalog titles can still identify the right video; search its
         # transcript chunks directly before filling remaining slots globally.
         targeted = []
-        for video_id in self._title_video_ids(query, k):
-            targeted.extend(self._search_type(query, 2 if k > 1 else 1, "transcript", video_id=video_id))
+        title_video_ids = self._title_video_ids(query, k)
+        per_video_k = max(1, k // len(title_video_ids)) if title_video_ids else 0
+        for video_id in title_video_ids:
+            targeted.extend(self._search_type(query, per_video_k, "transcript", video_id=video_id))
         if targeted:
             seen = set()
             merged = []

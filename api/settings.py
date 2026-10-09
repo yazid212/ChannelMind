@@ -24,7 +24,6 @@ class Settings:
     trusted_proxy_cidrs: tuple[str, ...] = _csv("TRUSTED_PROXY_CIDRS", "")
     workspace_ttl_seconds: int = int(os.getenv("WORKSPACE_TTL_SECONDS", "86400"))
     max_request_bytes: int = int(os.getenv("MAX_REQUEST_BYTES", "32768"))
-    max_public_videos: int = int(os.getenv("MAX_PUBLIC_VIDEOS", "10"))
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
     extension_ids: tuple[str, ...] = _csv("CHANNELMIND_EXTENSION_IDS", "")
@@ -90,8 +89,6 @@ class Settings:
                 for host in self.allowed_hosts
             ):
                 problems.append("ALLOWED_HOSTS must contain explicit public API hostnames in production")
-        if self.max_public_videos < 1 or self.max_public_videos > 50:
-            problems.append("MAX_PUBLIC_VIDEOS must be between 1 and 50")
         if any(len(item) != 32 or any(c not in "abcdefghijklmnop" for c in item) for item in self.extension_ids):
             problems.append("CHANNELMIND_EXTENSION_IDS must contain valid Chrome extension IDs")
         if self.export_retention_seconds < 300:

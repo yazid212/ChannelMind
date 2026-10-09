@@ -46,6 +46,9 @@ export type JobResult = {
   added_titles?: string[];
   message?: string;
   warning?: string;
+  coverage?: ExportCoverage;
+  issues?: ExportIssue[];
+  issue_total?: number;
 };
 export type TranscriptImportJob = {
   id: string;
@@ -99,6 +102,12 @@ export const api = {
       { method: "POST", body: JSON.stringify({ video }) },
       workspace.token,
     ),
+  ingestPlaylist: (workspace: Workspace, playlist: string) =>
+    request<{ job_id: string; status: string }>(
+      `/api/v1/workspaces/${workspace.workspace_id}/playlists`,
+      { method: "POST", body: JSON.stringify({ playlist }) },
+      workspace.token,
+    ),
   uploadExport: (workspace: Workspace, file: File) =>
     request<TranscriptImportJob>(
       `/api/v1/workspaces/${workspace.workspace_id}/imports`,
@@ -118,10 +127,10 @@ export const api = {
     method: "POST", body: JSON.stringify({ code }),
   }),
   createWorkspace: () => request<Workspace>("/api/v1/workspaces", { method: "POST" }),
-  ingest: (workspace: Workspace, channel: string, maxVideos: number) =>
+  ingest: (workspace: Workspace, channel: string) =>
     request<{ job_id: string; status: string }>(
       `/api/v1/workspaces/${workspace.workspace_id}/ingestions`,
-      { method: "POST", body: JSON.stringify({ channel, max_videos: maxVideos }) },
+      { method: "POST", body: JSON.stringify({ channel }) },
       workspace.token,
     ),
   expand: (workspace: Workspace, question: string) =>
@@ -140,10 +149,11 @@ export const api = {
     workspace: Workspace,
     question: string,
     history: Array<{ role: "user" | "assistant"; content: string }>,
+    mode: "transcript" | "general" = "transcript",
   ) =>
     request<ChatResult>(
       `/api/v1/workspaces/${workspace.workspace_id}/chat`,
-      { method: "POST", body: JSON.stringify({ question, history: history.slice(-4) }) },
+      { method: "POST", body: JSON.stringify({ question, history: history.slice(-4), mode }) },
       workspace.token,
     ),
 };

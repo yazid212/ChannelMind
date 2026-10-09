@@ -139,6 +139,52 @@ def test_search_routes_named_lesson_to_its_transcript_when_global_similarity_mis
     assert docs[1].metadata["video_id"] == "intro"
 
 
+def test_named_video_gets_enough_chunks_for_a_multi_part_question():
+    embedder = Embedder.__new__(Embedder)
+    embedder.vectorstore = Mock()
+    relevant = [
+        Document(page_content=text, metadata={"video_id": "sorting", "start_time": start})
+        for start, text in [(3, "sort changes the list"), (78, "sorted makes a new list"),
+                            (156, "sort by price using a key"), (233, "key function example")]
+    ]
+
+    def search(_query, *, k, filter):
+        if filter == {"document_type": "catalog"}:
+            return [
+                Document(page_content="", metadata={"video_id": "sorting", "title": "How to Sort Lists in Python"}),
+                Document(page_content="", metadata={"video_id": "sets", "title": "What are Sets in Python?"}),
+            ]
+        if filter == {"$and": [{"document_type": "transcript"}, {"video_id": "sorting"}]}:
+            return relevant[:k]
+        return [Document(page_content="unrelated", metadata={"video_id": "sets", "start_time": 0})]
+
+    embedder.vectorstore.similarity_search.side_effect = search
+    question = "In How to Sort Lists in Python, how do sort and sorted differ, and how are items sorted by price?"
+
+    assert embedder._title_video_ids(question, 4) == ["sorting"]
+    docs = embedder.search(question, k=4)
+
+    assert [doc.metadata["start_time"] for doc in docs] == [3, 78, 156, 233]
+    embedder.vectorstore.similarity_search.assert_any_call(
+        question, k=4,
+        filter={"$and": [{"document_type": "transcript"}, {"video_id": "sorting"}]},
+    )
+
+
+def test_named_title_phrase_beats_shared_topic_words():
+    embedder = Embedder.__new__(Embedder)
+    embedder.search_catalog = Mock(return_value=[
+        Document(page_content="", metadata={"video_id": "map", "title": "Map and Filter Functions in Python"}),
+        Document(page_content="", metadata={"video_id": "functions", "title": "Python Functions Tutorial"}),
+        Document(page_content="", metadata={"video_id": "stacks", "title": "Python Stacks"}),
+        Document(page_content="", metadata={"video_id": "sorting", "title": "How to Sort Lists"}),
+    ])
+
+    assert embedder._title_video_ids(
+        "Why does the Python Functions tutorial split programs, and what is a parameter?", 4
+    ) == ["functions"]
+
+
 def test_catalog_documents_are_separate_from_transcripts():
     embedder = Embedder.__new__(Embedder)
     embedder.vectorstore = Mock()

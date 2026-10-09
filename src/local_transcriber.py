@@ -3,14 +3,87 @@
 import math
 import os
 import subprocess
+import sys
 import tempfile
+import threading
+import time
+from importlib.util import find_spec
 from pathlib import Path
 
-from config import LOCAL_WHISPER_DEVICE, LOCAL_WHISPER_MODEL, LOCAL_WHISPER_MODEL_PATH
+from config import (
+    LOCAL_AUDIO_TEMP_PATH,
+    LOCAL_WHISPER_DEVICE,
+    LOCAL_WHISPER_CPU_THREADS,
+    LOCAL_WHISPER_MODEL,
+    LOCAL_WHISPER_MODEL_PATH,
+)
 from .utils import clean_text
 
 
 AUDIO_CHUNK_SECONDS = 15 * 60
+_thread_model = threading.local()
+_cuda_lock = threading.Lock()
+_cuda_configured = False
+_cuda_dll_handles = []
+
+
+class VideoUnavailableError(RuntimeError):
+    """YouTube will not provide playable audio for this video."""
+
+
+class VideoRestrictedError(RuntimeError):
+    """YouTube requires authentication before it provides this video's audio."""
+
+
+class VideoAccessBlockedError(RuntimeError):
+    """YouTube challenged this connection before providing public audio."""
+
+
+def _configure_cuda_dlls() -> None:
+    """Expose project-local NVIDIA wheel DLLs to CTranslate2 on Windows."""
+    global _cuda_configured
+    if sys.platform != "win32" or LOCAL_WHISPER_DEVICE != "cuda":
+        return
+    with _cuda_lock:
+        if _cuda_configured:
+            return
+        for package in ("nvidia.cublas", "nvidia.cudnn"):
+            spec = find_spec(package)
+            if spec is None or not spec.submodule_search_locations:
+                continue
+            root = Path(next(iter(spec.submodule_search_locations)))
+            for child in ("bin", "lib"):
+                folder = root / child
+                if folder.is_dir():
+                    _cuda_dll_handles.append(os.add_dll_directory(str(folder)))
+                    os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
+        _cuda_configured = True
+
+
+def _whisper_model():
+    """Load one model per transcription thread and reuse it across videos."""
+    model = getattr(_thread_model, "model", None)
+    if model is not None:
+        return model
+    _configure_cuda_dlls()
+    from faster_whisper import WhisperModel
+
+    model_root = os.path.abspath(LOCAL_WHISPER_MODEL_PATH)
+    os.makedirs(model_root, exist_ok=True)
+    try:
+        model = WhisperModel(
+            LOCAL_WHISPER_MODEL,
+            device=LOCAL_WHISPER_DEVICE,
+            compute_type="int8" if LOCAL_WHISPER_DEVICE == "cpu" else "float16",
+            download_root=model_root,
+            cpu_threads=LOCAL_WHISPER_CPU_THREADS,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "Could not load the local speech model. Check the model download and device setting."
+        ) from error
+    _thread_model.model = model
+    return model
 
 
 def _download_audio(video_id: str, directory: Path) -> tuple[Path, str, float]:
@@ -28,14 +101,42 @@ def _download_audio(video_id: str, directory: Path) -> tuple[Path, str, float]:
         "socket_timeout": 20,
         "retries": 3,
         "fragment_retries": 3,
+        "noprogress": True,
     }
-    try:
-        with YoutubeDL(options) as downloader:
-            info = downloader.extract_info(
-                f"https://www.youtube.com/watch?v={video_id}", download=True
-            )
-    except DownloadError as error:
-        raise RuntimeError("Could not download this video's audio from YouTube.") from error
+    bot_challenged = False
+    for attempt in range(3):
+        try:
+            attempt_options = dict(options)
+            if bot_challenged:
+                client = ("android", "mweb")[attempt - 1]
+                attempt_options["extractor_args"] = {"youtube": {"player_client": [client]}}
+            with YoutubeDL(attempt_options) as downloader:
+                info = downloader.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=True
+                )
+            break
+        except DownloadError as error:
+            message = str(error).lower()
+            if "sign in to confirm your age" in message:
+                raise VideoRestrictedError("YouTube requires age verification for this video.") from error
+            if any(marker in message for marker in ("video unavailable", "private video")):
+                raise VideoUnavailableError("This video is unavailable on YouTube.") from error
+            bot_challenge = "sign in to confirm" in message and "not a bot" in message
+            bot_challenged = bot_challenged or bot_challenge
+            temporary_failure = any(
+                code in str(error) for code in ("HTTP Error 403", "HTTP Error 429", "HTTP Error 5")
+            ) or bot_challenged
+            if attempt == 2 or not temporary_failure:
+                if bot_challenged:
+                    raise VideoAccessBlockedError(
+                        "YouTube blocked this connection with a bot verification challenge."
+                    ) from error
+                raise RuntimeError("Could not download this video's audio from YouTube.") from error
+            for partial in directory.glob("audio.*.part"):
+                partial.unlink(missing_ok=True)
+            if bot_challenged:
+                continue
+            time.sleep(3 * (attempt + 1))
     audio_files = [path for path in directory.glob("audio.*") if path.is_file() and not path.name.endswith(".part")]
     if not info or not audio_files:
         raise RuntimeError("No downloadable audio was found for this video.")
@@ -67,22 +168,14 @@ def _audio_chunk(audio_path: Path, output_path: Path, start: int, length: int) -
 
 def transcribe_video_audio(video_id: str) -> dict:
     """Download audio, transcribe 15-minute slices locally, and preserve timestamps."""
-    from faster_whisper import WhisperModel
-
-    with tempfile.TemporaryDirectory(prefix="channelmind-audio-") as temporary:
+    temporary_root = Path(LOCAL_AUDIO_TEMP_PATH).resolve()
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="channelmind-audio-", dir=temporary_root
+    ) as temporary:
         directory = Path(temporary)
         audio_path, title, duration = _download_audio(video_id, directory)
-        model_root = os.path.abspath(LOCAL_WHISPER_MODEL_PATH)
-        os.makedirs(model_root, exist_ok=True)
-        try:
-            model = WhisperModel(
-                LOCAL_WHISPER_MODEL,
-                device=LOCAL_WHISPER_DEVICE,
-                compute_type="int8" if LOCAL_WHISPER_DEVICE == "cpu" else "float16",
-                download_root=model_root,
-            )
-        except Exception as error:
-            raise RuntimeError("Could not load the local speech model. Check the model download and device setting.") from error
+        model = _whisper_model()
 
         segments = []
         for part in range(math.ceil(duration / AUDIO_CHUNK_SECONDS)):

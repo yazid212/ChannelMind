@@ -16,7 +16,7 @@ from src.embedder import Embedder
 from src.utils import format_timestamp, log_exception_safely
 
 from .jobs import JobManager
-from .export_routes import create_export_router
+from .export_routes import PlaylistExportRequest, create_export_router
 from .rate_limit import RateLimiter
 from .schemas import (
     ChatRequest,
@@ -144,11 +144,9 @@ def start_ingestion(
 ) -> IngestionResponse:
     _assert_workspace(workspace_id, identity)
     limiter.check("ingestion", client_address(request), limit=3, window=3600)
-    max_videos = min(payload.max_videos, settings.max_public_videos)
     job_id = jobs.enqueue(
         workspace_id,
         payload.channel,
-        max_videos,
         identity.expires_at,
     )
     return IngestionResponse(job_id=job_id, status="queued")
@@ -168,6 +166,23 @@ def start_video_ingestion(
     _assert_workspace(workspace_id, identity)
     limiter.check("ingestion", client_address(request), limit=3, window=3600)
     job_id = jobs.enqueue_video(workspace_id, payload.video, identity.expires_at)
+    return IngestionResponse(job_id=job_id, status="queued")
+
+
+@app.post(
+    f"{settings.api_prefix}/workspaces/{{workspace_id}}/playlists",
+    response_model=IngestionResponse,
+    status_code=202,
+)
+def start_playlist_ingestion(
+    workspace_id: str,
+    payload: PlaylistExportRequest,
+    request: Request,
+    identity: WorkspaceIdentity = Depends(require_workspace),
+) -> IngestionResponse:
+    _assert_workspace(workspace_id, identity)
+    limiter.check("ingestion", client_address(request), limit=3, window=3600)
+    job_id = jobs.enqueue_playlist(workspace_id, payload.playlist, identity.expires_at)
     return IngestionResponse(job_id=job_id, status="queued")
 
 
@@ -256,6 +271,7 @@ async def chat(
             rag.ask,
             payload.question,
             [message.model_dump() for message in payload.history],
+            payload.mode,
         )
         return ChatResponse(**result)
     except APIConnectionError as error:

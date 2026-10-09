@@ -6,7 +6,7 @@
 |---|---|---|
 | Next.js frontend | Input, job polling, chat, citation display | Vercel |
 | FastAPI API | Validation, workspace authorization, limits, chat orchestration | Container web service |
-| RQ worker | Channel cataloging, on-demand YouTube extraction, chunking, embedding, vector writes | Container worker |
+| RQ worker | Collection discovery, YouTube transcription, chunking, embedding, vector writes | Container worker |
 | Redis | Job durability, status, distributed rate limiting | Managed Redis/Valkey |
 | Qdrant | Tenant-filtered transcript vectors | Qdrant Cloud or managed Qdrant |
 | LLM provider | Grounded answer generation | OpenRouter, Groq, xAI, or NVIDIA |
@@ -19,14 +19,14 @@ Every Qdrant point contains a hashed `workspace_id` payload. Every search and de
 
 Each workspace contains two explicitly separated vector document types. `catalog` points hold lightweight public title and description metadata for channel discovery. `transcript` points hold timestamped text and are the only documents permitted into answer generation.
 
-## Hybrid whole-channel retrieval
+## Collection ingestion and retrieval
 
-1. Initial ingestion catalogs up to `MAX_CATALOG_VIDEOS` uploads but downloads transcripts only for the visitor-selected recent subset.
-2. Before each answer, semantic search runs over catalog metadata and selects relevant videos that do not yet have transcript chunks.
-3. The worker downloads and indexes up to `ON_DEMAND_VIDEOS` additional transcripts.
+1. Playlist and channel ingestion discovers all public entries through the YouTube Data API and records them in the catalog.
+2. The worker processes each video with public captions or local speech recognition, then indexes its transcript and publishes progress.
+3. Questions can run while ingestion continues, using the transcript chunks indexed so far.
 4. Answer retrieval runs only over transcript chunks, so catalog descriptions are never treated as evidence or cited.
 
-This removes the initial 10-video knowledge ceiling without paying the latency and compute cost of transcribing an entire channel up front. The default catalog safety cap is 2,000 uploads and can be changed per deployment; setting it to `0` removes the cap.
+Large collections can take hours when caption requests are blocked and audio must be transcribed locally. The coverage report distinguishes indexed, unavailable, failed, and pending entries.
 
 RQ jobs store their owning workspace in job metadata. Job polling returns `404` when the capability and job owner do not match, which avoids confirming another tenant's job identifiers.
 
@@ -36,7 +36,7 @@ The Chrome extension's public-channel mode accepts a channel URL or handle, disc
 
 The worker lists channels available through `channels.list(mine=true)`, downloads authorized captions, and saves per-video progress. Quota exhaustion pauses the run; completion does not imply every video had captions. TXT/JSON/ZIP downloads require the owning workspace token. The extension's alarm downloads a completed ZIP even when its dashboard is closed.
 
-The website also accepts the exported ZIP or JSON and validates its manifest, video IDs, segments and timestamps before indexing every successful transcript in a new workspace. This import bypasses the initial 10-video limit. Choosing **Use in ChannelMind** builds a separate search workspace directly from the server export. A 60-second single-use handoff in the browser fragment transfers that search capability to the website; it cannot access the original workspace's Google grant. See [extension/README.md](extension/README.md) for installation, quota and recovery limits.
+The website also accepts the exported ZIP or JSON and validates its manifest, video IDs, segments and timestamps before indexing every successful transcript in a new workspace. Choosing **Use in ChannelMind** builds a separate search workspace directly from the server export. A 60-second single-use handoff in the browser fragment transfers that search capability to the website; it cannot access the original workspace's Google grant. See [extension/README.md](extension/README.md) for installation, quota and recovery limits.
 
 1. Browser input is untrusted and constrained with Pydantic lengths, types, and a YouTube host allowlist.
 2. Workspace capabilities are HMAC-signed, expire automatically, and are compared in constant time.
@@ -52,7 +52,6 @@ Default limits are intentionally conservative:
 - Ingestion: 3 per source address per hour
 - Chat: 20 per source address per minute
 - On-demand expansion: 20 per source address per hour
-- Initial public transcript ingestion: at most 10 videos per workspace
 - Channel metadata catalog: at most 2,000 videos by default
 - Request body: 32 KiB
 - Workspace lifetime: 24 hours
