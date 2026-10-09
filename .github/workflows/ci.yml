@@ -46,3 +46,14 @@ jobs:
       - run: npm run build
       - run: node --test extension/tests/*.test.mjs
         working-directory: .
+
+  api-image:
+    if: startsWith(github.ref, 'refs/heads/staging/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build --file Dockerfile.api --tag channelmind-api:staging .
+      - run: docker run --rm --env APP_ENV=development --entrypoint python channelmind-api:staging -c "import api.main; print('api import ok')"
