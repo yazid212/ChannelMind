@@ -3,7 +3,7 @@ name: Security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "staging/**"]
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
