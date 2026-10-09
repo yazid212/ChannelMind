@@ -54,6 +54,25 @@ def test_qdrant_queries_always_include_workspace_filter():
     assert video_filter.must[2].key == "video_id"
 
 
+def test_qdrant_existing_collection_adds_video_id_index():
+    with (
+        patch("src.embedder.HuggingFaceEmbeddings"),
+        patch("src.embedder.QDRANT_URL", "https://qdrant.example"),
+        patch("qdrant_client.QdrantClient") as client_class,
+    ):
+        client = client_class.return_value
+        client.collection_exists.return_value = True
+        client.get_collection.return_value.payload_schema = {"workspace_id": models.PayloadSchemaType.KEYWORD}
+        Embedder(workspace_id="workspace", backend="qdrant")
+
+    client.create_payload_index.assert_called_once_with(
+        collection_name="youtube_transcripts",
+        field_name="video_id",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+        wait=True,
+    )
+
+
 def test_document_creation():
     # Document creation is pure and does not require loading the real model.
     embedder = Embedder.__new__(Embedder)

@@ -121,6 +121,16 @@ class Embedder:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
+        # Qdrant Cloud requires an index for every filtered payload field.
+        # Existing collections may predate the targeted video search path.
+        if "video_id" not in self.vectorstore.get_collection(self.collection_name).payload_schema:
+            self.vectorstore.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="video_id",
+                field_schema=models.PayloadSchemaType.KEYWORD,
+                wait=True,
+            )
+
     def _create_documents(self, transcripts: List[Dict]) -> List[Document]:
         """Chunk transcripts while retaining source and timestamp metadata."""
         documents = []
