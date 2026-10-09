@@ -8,7 +8,9 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements-core.txt requirements-api.txt ./
-RUN pip install --upgrade pip && pip install -r requirements-api.txt
+RUN pip install --upgrade pip \
+    && pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install -r requirements-api.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 RUN python -c "from faster_whisper.utils import download_model; download_model('small', output_dir='/opt/whisper-small')"
 
