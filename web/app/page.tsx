@@ -445,6 +445,9 @@ export default function Home() {
 
   const canAsk = (answerMode === "general" || metrics.videos > 0) && (status === "ready" ||
     ((status === "ingesting" || status === "error") && (activeScope === "playlist" || activeScope === "channel")));
+  const emptyCollection = status === "ready" && (importedKind === "playlist" || importedKind === "channel") &&
+    !!coverage && coverage.discovered > 0 && coverage.indexed === 0 && coverage.pending === 0;
+  const youtubeBlocked = emptyCollection && coverage?.reasons.some(({ reason }) => reason === "youtube_access_blocked");
 
   return (
     <main>
@@ -475,7 +478,7 @@ export default function Home() {
         <aside className="controlPanel">
           <div className="panelHeading">
             <span className="step">01</span>
-            <div><h2>{status === "ready" ? `${(activeScope || importedKind)[0].toUpperCase()}${(activeScope || importedKind).slice(1)} ready` : "Build a knowledge base"}</h2><p>{importedChannel || "Start with a public video, playlist, or channel."}</p></div>
+            <div><h2>{emptyCollection ? "No transcripts indexed" : status === "ready" ? `${(activeScope || importedKind)[0].toUpperCase()}${(activeScope || importedKind).slice(1)} ready` : "Build a knowledge base"}</h2><p>{importedChannel || "Start with a public video, playlist, or channel."}</p></div>
           </div>
           <form onSubmit={processSource}>
             <label htmlFor="source">YouTube URL or @handle</label>
@@ -499,12 +502,12 @@ export default function Home() {
             {importJob && status === "error" && <button type="button" onClick={resumeImport}>Resume import</button>}
           </div>
 
-          <div className="statusCard" data-state={status}>
-            <span className="statusIcon">{status === "ready" ? "✓" : status === "error" ? "!" : "•"}</span>
+          <div className="statusCard" data-state={emptyCollection ? "error" : status}>
+            <span className="statusIcon">{emptyCollection || status === "error" ? "!" : status === "ready" ? "✓" : "•"}</span>
             <div>
-              <strong>{status === "ready" ? `${activeScope || importedKind} knowledge base ready` : status === "ingesting" ? `Processing ${activeScope || "source"}` : status === "booting" ? "Creating secure workspace" : status === "error" ? "Action needed" : "Ready to process"}</strong>
+              <strong>{emptyCollection ? `${activeScope || importedKind} has no searchable transcripts` : status === "ready" ? `${activeScope || importedKind} knowledge base ready` : status === "ingesting" ? `Processing ${activeScope || "source"}` : status === "booting" ? "Creating secure workspace" : status === "error" ? "Action needed" : "Ready to process"}</strong>
               {status === "ingesting" && processingMessage && <small>{processingMessage}</small>}
-              <small>{status === "error" ? error : status === "ready" ? (metrics.videos > 0 ? `${metrics.catalog} catalog videos · ${metrics.videos} transcripts ready${importedKind === "video" && transcriptSource ? ` · ${transcriptSource === "local_speech_recognition" ? "local speech recognition" : "YouTube captions"}` : ""}` : `${metrics.catalog} catalog videos · ${importedKind === "channel" ? "transcripts load when you ask" : "no transcripts indexed"}`) : "Each session is isolated and expires automatically."}</small>
+              <small>{emptyCollection ? (youtubeBlocked ? `${coverage.discovered} videos found, but YouTube blocked this server's transcript and audio requests.` : `${coverage.discovered} videos found, but none could be indexed. See the reasons below.`) : status === "error" ? error : status === "ready" ? (metrics.videos > 0 ? `${metrics.catalog} catalog videos · ${metrics.videos} transcripts ready${importedKind === "video" && transcriptSource ? ` · ${transcriptSource === "local_speech_recognition" ? "local speech recognition" : "YouTube captions"}` : ""}` : `${metrics.catalog} catalog videos · ${importedKind === "channel" ? "transcripts load when you ask" : "no transcripts indexed"}`) : "Each session is isolated and expires automatically."}</small>
             </div>
           </div>
           {status === "ready" && resultWarning && <p className="resultWarning">{resultWarning}</p>}
