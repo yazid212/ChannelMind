@@ -4,28 +4,11 @@ The recommended v1 layout is **Vercel for `web/`, Railway for the API, ingestion
 
 The Qdrant free cluster is useful for staging, but it suspends after inactivity and has no production backup schedule. Use Standard for a public v1 and enable backups: [Qdrant cluster choices](https://qdrant.tech/documentation/cloud/create-cluster/).
 
-## 0. Push the source to GitHub
+## 0. Review the source before public release
 
-The target repository is `https://github.com/yazid212/ChannelMind`. It had no remote branch when checked on 2026-10-03. In PowerShell, from this project's root:
+The repository is `https://github.com/yazid212/ChannelMind`. Review the final `main` branch and its full Git history before changing its visibility. Confirm the Secret history scan, Python security audit, frontend checks, and API image build pass on the release commit. Review past GitHub Actions logs and commit author metadata as well: both become visible when the repository is public. Never commit `.env`, `web/.env.local`, `data/`, `vectorstore/`, model caches, ZIP exports, or local transcripts. Rotate any credential that was ever exposed; removing it from the latest commit is not enough.
 
-```powershell
-cd C:\Users\piome\PycharmProjects\youtube_rag
-git init -b main
-git check-ignore -v .env web/.env.local data/ vectorstore/ .venv/ .codex/
-git add .
-git diff --cached --name-only
-git diff --cached --check
-```
-
-Inspect the staged file list before committing. Never commit `.env`, `data/`, `vectorstore/`, model caches, ZIP exports or local transcripts. The ignored files above should not appear in the staged list. If they do, remove them from the Git index before proceeding and investigate why. Keep the repository private during setup and rotate any credential that was ever published. Then run:
-
-```powershell
-git commit -m "Prepare ChannelMind v1"
-git remote add origin https://github.com/yazid212/ChannelMind.git
-git push -u origin main
-```
-
-If Git requests an author identity, set `git config user.name "Your Name"` and `git config user.email "you@example.com"` for this repository, then retry the commit. Complete GitHub's browser sign-in if prompted. Confirm the `main` branch and GitHub Actions checks appear in the repository.
+Making the repository public shares the source. A working public website requires the separate services and smoke checks below.
 
 ## Before creating cloud services
 

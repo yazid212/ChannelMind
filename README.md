@@ -69,6 +69,17 @@ Add the credentials you use to `.env`. Paste a public video, playlist, or channe
 
 For a playlist or channel, the API discovers and processes every entry. Duplicate, unavailable, and failed entries remain in the coverage count, and pending counts decrease as the job runs. A 32-video playlist should produce 32 indexed transcripts when all 32 videos are accessible and contain speech. Questions can use completed transcripts while the remaining videos process. Reloading the page resumes job polling in the same browser session.
 
+### Recover captions when YouTube blocks the cloud server
+
+YouTube may block caption requests from a cloud server while allowing the same public captions from your computer. Run the lightweight local recovery utility and import its ZIP into the website:
+
+```powershell
+python -m pip install -r requirements-local.txt
+python scripts/recover_transcripts_local.py "https://www.youtube.com/playlist?list=PLAYLIST_ID" -o recovered.zip
+```
+
+It also retries pending videos in a partial ChannelMind ZIP or JSON export. The utility sends caption requests from your computer and does not download video/audio or bypass YouTube restrictions. See [the extension guide](extension/README.md#recover-cloud-blocked-captions-on-your-computer) for details.
+
 The answer-source control defaults to **Transcript only**: answers must come from indexed passages and cite them. **General knowledge** is an explicit separate choice; those answers are labeled and have no video citations. The local fixed-question evaluation and current measured results are in [EVALUATION.md](EVALUATION.md).
 
 Audio is processed in 15-minute pieces, then the timestamped text is indexed. The default multilingual `small` model runs on CPU; playlist and channel jobs process three videos concurrently by default (`LOCAL_TRANSCRIPTION_WORKERS`) with four CPU threads per model (`LOCAL_WHISPER_CPU_THREADS`). Completed transcripts are reused when the same collection is processed again in a workspace. Large collections can still take substantial time. Temporary audio files are stored under `LOCAL_AUDIO_TEMP_PATH` (default `data/tmp`) so local processing does not depend on operating-system temp-folder permissions. YouTube access is still required to fetch audio, and some private, restricted, or blocked videos cannot be processed. Q&A uses the configured external LLM provider.

@@ -68,6 +68,23 @@ Public export uses YouTube Data API quota for channel discovery; transcript retr
 
 The worker checkpoints catalog pagination and every completed video. Quota exhaustion pauses the job with an explanation; after quota is restored, click **Resume export**. Temporary transcript failures are retried by the extension after increasing delays, up to three times; you can also resume manually. Completed transcripts are reused. Reconnect Google if authorization expires, then resume. Caption tracks that are permanently missing or forbidden are reported and skipped.
 
+### Recover cloud-blocked captions on your computer
+
+YouTube can block caption requests from a cloud server even when the same public captions work from your computer. Use the local recovery script to send those requests from your own network:
+
+```powershell
+python -m pip install -r requirements-local.txt
+python scripts/recover_transcripts_local.py "https://www.youtube.com/playlist?list=PLAYLIST_ID" -o recovered.zip
+```
+
+The script discovers the playlist on your computer, fetches accessible caption tracks locally, and writes a ChannelMind ZIP. You can also give it a partial ZIP or JSON downloaded from the extension; it keeps transcripts already collected and retries the remaining entries:
+
+```powershell
+python scripts/recover_transcripts_local.py partial-export.zip -o recovered.zip
+```
+
+Import `recovered.zip` on the ChannelMind website. Only the transcripts in that ZIP are sent to the indexing service. Captions that are unavailable or still blocked locally remain listed as skipped with a reason. The script does not download video/audio or bypass YouTube sign-in, age, privacy, or other access restrictions. Playlist discovery defaults to at most 500 videos; change this with `--max-videos` (maximum 5,000).
+
 If you already downloaded an incomplete ZIP or JSON export, select it under **Continue an older partial export**. The extension reuses its saved transcripts and checks the remaining uploads. A partial file has `complete: false` and pending video entries in `channel.json`; the ZIP's README also labels it as partial. Keep your original ZIP until the new export finishes.
 
 An export has a 50 MB structured transcript budget and a one-hour production worker timeout. A killed production worker's lease expires after 62 minutes; resume then continues from its last checkpoint. Export and OAuth data expire with the workspace (24 hours by default, or earlier if `EXPORT_RETENTION_SECONDS` is shorter for exports). Download valuable results before they expire. Local mode stores encrypted export checkpoints in `data/channel-exports.sqlite3`, so API restarts preserve them within their TTL. Production uses Redis.

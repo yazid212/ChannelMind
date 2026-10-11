@@ -64,7 +64,8 @@ jobs:
         # Chroma server-only advisories are temporarily baselined. The app's
         # embedded-only invariant is tested below; see security/audit-exceptions.md.
         run: |
-          pip-audit --requirement requirements.txt --requirement requirements-api.txt --strict \
+          pip-audit --requirement requirements.txt --requirement requirements-api.txt \
+            --requirement requirements-local.txt --strict \
             --ignore-vuln PYSEC-2026-311 \
             --ignore-vuln PYSEC-2026-3813 \
             --ignore-vuln PYSEC-2026-3814 \

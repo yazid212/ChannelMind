@@ -1,0 +1,4 @@
+# Lightweight dependencies for local caption recovery; no API, Redis, Qdrant,
+# embedding model, or Whisper installation is needed.
+youtube-transcript-api==1.2.4
+yt-dlp==2026.8.19
