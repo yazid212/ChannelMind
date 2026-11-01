@@ -1,7 +1,7 @@
 # Shared extraction, retrieval, embedding, and LLM dependencies.
 python-dotenv==1.2.3
 youtube-transcript-api==1.2.4
-google-api-python-client==2.200.0
+google-api-python-client==2.201.0
 langchain-openai==1.6.0
 openai==3.6.0
 tiktoken==0.14.0
